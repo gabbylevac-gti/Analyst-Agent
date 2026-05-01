@@ -49,7 +49,7 @@ export const executeCodeTool = createTool({
     stderr: z.string(),
     error: z.string().optional(),
   }),
-  execute: async ({ context }) => {
+  execute: async (context) => {
     const { code, csvUrl } = context;
 
     const sandbox = await CodeInterpreter.create({

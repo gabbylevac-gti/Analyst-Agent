@@ -70,7 +70,7 @@ export const writeBeliefTool = createTool({
     id: z.string().optional(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async (context) => {
     const supabase = getSupabase();
 
     try {

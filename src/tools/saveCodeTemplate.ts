@@ -61,7 +61,7 @@ export const saveCodeTemplateTool = createTool({
     message: z.string(),
     alreadyExisted: z.boolean(),
   }),
-  execute: async ({ context }) => {
+  execute: async (context) => {
     const supabase = getSupabase();
 
     try {

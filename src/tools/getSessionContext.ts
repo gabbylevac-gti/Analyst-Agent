@@ -102,7 +102,7 @@ export const getSessionContextTool = createTool({
       .optional(),
     csvUrl: z.string().optional(),
   }),
-  execute: async ({ context }) => {
+  execute: async (context) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
     const supabase = getSupabase();
 

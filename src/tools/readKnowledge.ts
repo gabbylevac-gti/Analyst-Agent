@@ -68,7 +68,7 @@ export const readKnowledgeTool = createTool({
       })
     ),
   }),
-  execute: async ({ context }) => {
+  execute: async (context) => {
     const { type, tags, searchTerm, templateName } = context;
     const supabase = getSupabase();
 
