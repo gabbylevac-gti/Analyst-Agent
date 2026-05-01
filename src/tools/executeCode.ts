@@ -10,7 +10,8 @@
 
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { CodeInterpreter } from "@e2b/code-interpreter";
+import pkg from "@e2b/code-interpreter";
+const { CodeInterpreter } = pkg;
 
 // ─── Output envelope schema ────────────────────────────────────────────────────
 

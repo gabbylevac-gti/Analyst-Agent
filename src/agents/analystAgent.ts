@@ -9,7 +9,7 @@
  * @see agents/analyst/instructions.md
  */
 
-import { Agent } from "@mastra/core";
+import { Agent } from "@mastra/core/agent";
 import { anthropic } from "@ai-sdk/anthropic";
 import * as fs from "fs";
 import * as path from "path";
