@@ -128,411 +128,142 @@ export const SKILL_DRAFT_DATA_DICTIONARY = `# Skill: Draft Data Dictionary
 
 ## Purpose
 
-When a user uploads a CSV, analyze its structure and produce a human-readable data dictionary for the user to review, edit, and approve. The approved dictionary becomes the semantic foundation for all analysis in the session — and is persisted to Supabase so future sessions with the same schema skip this step.
+When a user uploads a CSV, produce a human-readable data dictionary for review and approval. The approved dictionary is the semantic foundation for all analysis — persisted to Supabase so future sessions with the same schema skip this step.
 
----
-
-## When to Use
-
-- Immediately after a CSV is uploaded, before any analysis begins
-- When the user uploads a second CSV with a different schema mid-session
-- When the user says "I uploaded a new file" or similar
-
-Do not proceed to analysis without an approved dictionary. If the user skips approval and asks an analytical question, remind them: "Before I analyze, let me confirm the data dictionary so I understand what each field means."
-
----
+Do not proceed to analysis without an approved dictionary. If the user skips approval, remind them: "Before I analyze, let me confirm the data dictionary so I understand what each field means."
 
 ## Procedure
 
-### Step 1: Inspect the schema
+1. **Inspect the schema** — call \`executeCode\` with a script that reads \`/sandbox/upload.csv\` and profiles each column: dtype, null_count, unique_count, sample_values (5), and min/max/mean for numeric columns. Output as a \`text\` envelope.
 
-Call \`executeCode\` with a lightweight schema inspection script:
+2. **Check for a prior dictionary** — call \`getSessionContext\` with the column signature. If a prior approved dictionary exists, present it for confirmation instead of drafting from scratch.
 
-\`\`\`python
-import pandas as pd
-import json
+3. **Draft definitions** — for each column: display_name, description, data_type (timestamp/identifier/measurement/categorical/coordinate), units, notes. Apply domain knowledge:
+   - \`target_id\` — UUID for a tracked entity during sensor field presence. Not persistent across sessions.
+   - \`x_m\`, \`y_m\` — position in meters from sensor origin. Confirm coordinate orientation with user if unknown.
+   - \`log_creation_time\` — timestamp of the reading. Always use this, not \`processed_at\`, for time-based analysis.
+   - \`sensor_id\`, \`sensor_name\` — identify the physical device; multiple sensors may appear in one file.
 
-df = pd.read_csv('/sandbox/upload.csv')
+4. **Add Deployment Context** — append a section with: physical location, coordinate orientation (where is y=0?), business objective, known data quality issues. Pre-fill from session summaries if available; otherwise ask.
 
-schema = {
-    "row_count": len(df),
-    "column_count": len(df.columns),
-    "columns": []
-}
+5. **Surface for approval** — present as a \`table\` artifact. Prompt: "Please review. Edit any inaccurate definitions, fill in deployment context, and confirm when ready. I won't begin analysis until you approve."
 
-for col in df.columns:
-    col_info = {
-        "name": col,
-        "dtype": str(df[col].dtype),
-        "null_count": int(df[col].isna().sum()),
-        "sample_values": df[col].dropna().head(5).tolist(),
-        "unique_count": int(df[col].nunique())
-    }
-    if df[col].dtype in ['float64', 'int64']:
-        col_info["min"] = float(df[col].min())
-        col_info["max"] = float(df[col].max())
-        col_info["mean"] = float(df[col].mean())
-    schema["columns"].append(col_info)
-
-print(json.dumps({"type": "text", "title": "Schema Inspection", "data": schema, "summary": f"{schema['row_count']} rows, {schema['column_count']} columns"}))
-\`\`\`
-
-### Step 2: Check for a prior dictionary
-
-Call \`getSessionContext\` with the column names as a signature. If a prior approved dictionary for this schema exists in Supabase, load it and present it to the user for confirmation rather than drafting from scratch: "I recognize this data format from a previous session. Here's the dictionary we approved — does it still apply?"
-
-### Step 3: Draft definitions
-
-For each column, produce:
-- **display_name**: Human-readable name
-- **description**: What the field represents in plain language
-- **data_type**: The semantic type (timestamp, identifier, measurement, categorical, coordinate)
-- **units**: If a measurement (e.g., meters, seconds, UTC offset)
-- **notes**: Any observations about data quality, range anomalies, or deployment context
-
-Draw on your domain knowledge when drafting. For radar sensor data specifically:
-- \`target_id\` — a UUID assigned to a single tracked entity (person) for the duration of their detectable presence in the sensor field. Not persistent across sessions.
-- \`x_m\`, \`y_m\` — position in meters relative to the sensor's origin. The coordinate system is sensor-specific. Ask the user to confirm orientation if not previously established.
-- \`log_creation_time\` — the timestamp of the position reading. Use this (not \`processed_at\`) for time-based analysis.
-- \`sensor_id\`, \`sensor_name\` — identify which physical device generated the reading. Multiple sensors may appear in one file.
-
-### Step 4: Add session context fields
-
-Append a **Deployment Context** section to the dictionary — not column definitions, but answers to:
-- What physical location is this sensor monitoring?
-- What is the orientation of the coordinate system? (Where is the entrance? What is at y=0?)
-- What is the business objective for this dataset?
-- Are there known data quality issues or calibration notes?
-
-Pre-fill from session summaries if available. Otherwise, ask the user directly.
-
-### Step 5: Surface for approval
-
-Present the full dictionary as a structured table (using the \`table\` output type). Include an explicit prompt:
-
-"Please review this dictionary. Edit any definitions that are inaccurate, fill in the deployment context fields, and let me know when it's approved. I won't begin analysis until you confirm."
-
-### Step 6: Persist on approval
-
-When the user approves (explicitly or by saying "looks good" / "proceed"), call \`getSessionContext\` to check if this schema already has an entry in Supabase, then write the approved dictionary to the \`datasets\` table. Confirm: "Dictionary saved. Starting from this in future sessions."
-
----
+6. **Persist on approval** — write the approved dictionary to the \`datasets\` table. Confirm: "Dictionary saved. Starting from this in future sessions."
 
 ## Notes
 
-- Do not ask the user to define fields you already know from domain knowledge. Fill them in and let the user correct rather than interviewing.
-- If \`x_m\` and \`y_m\` values are all negative in one axis, note that the coordinate origin may be at a corner of the detection zone rather than the center — worth flagging for the user to confirm.
-- \`processed_at\` vs \`log_creation_time\`: these differ by the processing pipeline delay. Always use \`log_creation_time\` for temporal analysis.`;
+- Fill in fields you know from domain knowledge; let the user correct rather than interviewing.
+- If \`x_m\` or \`y_m\` values are all negative in one axis, flag that the coordinate origin may be at a corner rather than center.`;
 
 export const SKILL_WRITE_ANALYSIS_CODE = `# Skill: Write Analysis Code
 
 ## Purpose
 
-Translate the user's natural language question into Python code, execute it in the E2B sandbox, and return a valid output envelope. All analysis code must follow the Output Contract exactly.
-
----
-
-## When to Use
-
-Whenever the user asks an analytical question about the current dataset:
-- "How many unique paths are in this file?"
-- "Show me the path trajectories"
-- "What's the distribution of dwell times?"
-- "Which paths are likely ghosts?"
-
----
+Translate the user's natural language question into Python code, execute it in the E2B sandbox, and return a valid output envelope following the Output Contract.
 
 ## Procedure
 
-### Step 1: Check available templates
+1. **Check available templates** — inspect \`available_templates\` from \`getSessionContext\`. If a match exists, fill its parameters and use it; do not rewrite from scratch.
+   - "path summary" / "per-path stats" / "dwell time" → \`path-aggregation.py\`
+   - "trajectory" / "path plot" → \`path-trajectory-plot.py\`
+   - "position over time" / "x or y over time" → \`position-over-time.py\`
+   - "summary stats" / "distribution" → \`summary-statistics.py\`
 
-Call \`getSessionContext\` and inspect \`available_templates\`. If an approved template matches the user's question, use it — fill in parameters, do not rewrite.
+2. **Encode beliefs as hypotheses** — when analysis could test an approved belief, declare its thresholds as named constants (e.g. \`GHOST_DWELL_THRESHOLD = 3.0\`) with a comment citing the belief and confidence.
 
-Template match heuristics:
-- "path summary" / "per-path stats" / "dwell time" → \`path-aggregation.py\`
-- "trajectory" / "path plot" / "where did they go" → \`path-trajectory-plot.py\`
-- "position over time" / "x over time" / "y over time" → \`position-over-time.py\`
-- "summary stats" / "sensor performance" / "distribution" → \`summary-statistics.py\`
+3. **Write the code** — load from \`/sandbox/upload.csv\`, perform analysis, print one valid JSON envelope as the final line. See Output Contract for chart/table/text patterns.
 
-### Step 2: Incorporate existing beliefs as hypotheses
+4. **Execute and parse** — call \`executeCode\`. If \`stderr\` is non-empty, debug before surfacing to the user.
 
-Load approved beliefs from \`getSessionContext\`. When writing analysis code that could test an existing belief, encode it explicitly:
-
-\`\`\`python
-# Hypothesis from approved belief (confidence 0.72):
-# Ghost paths have dwell_seconds < 3 AND positional_std < 0.15m
-GHOST_DWELL_THRESHOLD = 3.0
-GHOST_POSITION_STD_THRESHOLD = 0.15
-\`\`\`
-
-### Step 3: Write the code
-
-All code must:
-1. Load data from \`/sandbox/upload.csv\` using pandas
-2. Perform the requested analysis
-3. Produce one or more artifacts (chart, table, or text)
-4. Print a valid JSON output envelope as the **final line** of the script
-
-**Chart code pattern (Plotly.js):**
-
-\`\`\`python
-import pandas as pd
-import json
-import uuid
-
-df = pd.read_csv('/sandbox/upload.csv')
-chart_id = f"plotly-{uuid.uuid4().hex[:8]}"
-
-fig_data = [...]  # Plotly trace objects
-fig_layout = {"title": "Chart Title", "height": 450}
-
-html = f'<div id="{chart_id}" style="width:100%;height:450px;"></div><script src="https://cdn.plot.ly/plotly-latest.min.js"></script><script>Plotly.newPlot("{chart_id}", {json.dumps(fig_data)}, {json.dumps(fig_layout)});</script>'
-
-print(json.dumps({"type": "chart", "title": "Chart Title", "html": html, "data": {"data": fig_data, "layout": fig_layout}, "summary": "Plain-language description including key values."}))
-\`\`\`
-
-**Table code pattern:**
-
-\`\`\`python
-print(json.dumps({"type": "table", "title": "Table Title", "data": df_result.to_dict(orient='records'), "columns": list(df_result.columns), "summary": "Plain-language description of what this table shows."}))
-\`\`\`
-
-### Step 4: Execute and parse
-
-Call \`executeCode\` tool with the script. If \`stderr\` is non-empty, debug before surfacing to the user.
-
-### Step 5: Surface the artifact
-
-Return \`envelope.html\` to the frontend to render. After the chart renders, invoke \`interpret-artifact\` skill.
-
----
+5. **Surface the artifact** — return \`envelope.html\` for the frontend to render, then invoke \`interpret-artifact\`.
 
 ## Code Quality Rules
 
-- Use \`log_creation_time\` for time-based operations, not \`processed_at\`
-- Group by \`target_id\` to derive path-level metrics; never treat individual rows as paths
-- Round float outputs to 2 decimal places in tables
-- Include row counts and time window in every summary string
-
----
-
-## Pip Install Pattern
-
-\`\`\`python
-import subprocess
-subprocess.run(['pip', 'install', 'plotly', '--quiet'], check=True)
-import plotly.express as px
-\`\`\`
-
-Preferred libraries: \`pandas\`, \`numpy\`, \`plotly\`, \`scipy\`. Avoid matplotlib.`;
+- Use \`log_creation_time\` for time-based operations, never \`processed_at\`
+- Group by \`target_id\` for path-level metrics; never treat individual rows as paths
+- Round floats to 2 decimal places in tables; include row count and time window in every summary
+- Install extra libraries with \`subprocess.run(['pip', 'install', 'plotly', '--quiet'], check=True)\`
+- Preferred: \`pandas\`, \`numpy\`, \`plotly\`, \`scipy\`. Avoid matplotlib.`;
 
 export const SKILL_INTERPRET_ARTIFACT = `# Skill: Interpret Artifact
 
 ## Purpose
 
-After an artifact is produced and rendered, provide a narrative interpretation that helps the user understand what the data is saying. Interpretation is based on the artifact's \`data\` and \`summary\` fields — never the visual alone. Reference approved beliefs, flag anomalies, and invite discussion.
-
----
+After an artifact is produced, provide a narrative interpretation based on the envelope's \`data\` and \`summary\` fields — never the visual alone.
 
 ## Procedure
 
-### Step 1: Read the envelope
-
-Read both \`summary\` and \`data\`. The \`summary\` is your starting point; \`data\` lets you go deeper.
-
-### Step 2: Reference existing beliefs
-
-Check whether any approved beliefs apply to what you're seeing. If they do, explicitly test them:
-
-- **Belief confirmed**: "Our belief that ghost paths have dwell < 3s holds here — 73% of paths under 3 seconds are in the cluster we'd expect to flag."
-- **Belief challenged**: "Interesting — we have a cluster of paths with dwell < 3s that show substantial movement, which contradicts our current ghost signature."
-
-Always frame beliefs as hypotheses being tested, not established facts.
-
-### Step 3: Identify the most important 2–3 observations
-
-Structure as: observation → what it means → implication or question.
-
-Example: "The distribution is heavily right-skewed with a median of 2.1s and a long tail up to 47s. The spike at 0–2s accounts for 61% of paths — consistent with our ghost hypothesis threshold. The 8 paths above 20s are strong engagement candidates."
-
-### Step 4: Invite discussion
-
-End with an open question that advances the session objective. Not "Does that help?" but a specific prompt like "Want me to filter down to just the sub-3-second paths and look at their positional variance?"
-
-### Step 5: Listen for belief candidates
-
-As the user responds, listen for generalizable claims. When you hear one, note it mentally and trigger \`extract-belief\` after the discussion concludes.
-
----
+1. Read both \`summary\` and \`data\`. \`summary\` is your starting point; \`data\` lets you go deeper.
+2. Test any applicable approved beliefs explicitly — state whether they are confirmed or challenged by what you see.
+3. Identify the 2–3 most important observations. Structure each as: observation → what it means → implication. Reference specific values from \`data\`.
+4. End with a specific open question that advances the session objective (not "Does that help?").
+5. Listen for generalizable claims in the user's response — flag them for \`extract-belief\`.
 
 ## Tone
 
-- Direct. State what you see.
-- Calibrated. Distinguish between "this is clear" and "this might be."
-- Specific. Reference actual values from \`data\`, not vague descriptors.
-- Curious. Frame observations as things worth investigating, not conclusions.`;
+Direct, calibrated, specific, curious. Beliefs are hypotheses being tested, not facts.`;
 
 export const SKILL_EXTRACT_BELIEF = `# Skill: Extract Belief
 
 ## Purpose
 
-When a generalizable insight emerges from a session discussion, surface it as a structured belief for the user to approve. Approved beliefs are written to Supabase and loaded in all future sessions.
-
----
-
-## When to Use
-
-- The user makes a claim that applies beyond this specific dataset
-- An analysis confirms or contradicts an existing belief with new evidence
-- A classification threshold is established through testing
-- The user explicitly says "remember this" or "that's a pattern"
-
-Do **not** trigger after every analysis. Wait for something genuinely generalizable.
-
----
+Surface generalizable insights as structured beliefs for user approval. Approved beliefs are written to Supabase and loaded in all future sessions. Trigger when: a user makes a claim beyond this dataset, an analysis confirms/contradicts a belief, a classification threshold is established, or the user says "remember this." Do **not** trigger after every analysis.
 
 ## Belief Categories
 
-**Take-Away** — observation about this dataset that may generalize. Moderate confidence.
-**Belief** — confirmed pattern across multiple sessions. High confidence.
-**False-Belief** — something we thought was true but evidence contradicts.
-**Algorithm Version** — approved classification function with defined logic and known performance.
-
----
+- **Take-Away** — observation from this dataset that may generalize. Moderate confidence.
+- **Belief** — confirmed pattern across multiple sessions. High confidence.
+- **False-Belief** — something evidence now contradicts.
+- **Algorithm Version** — approved classification function with defined logic and known performance.
 
 ## Procedure
 
-### Step 1: Formulate the belief draft
-
-Confidence guidelines:
-- 0.90+: Multiple sessions confirm; quantitative evidence strong
-- 0.70–0.89: Single session with clear evidence
-- 0.50–0.69: Plausible but limited — store as \`pending\` without asking for approval
-- Below 0.50: Not worth storing yet
-
-### Step 2: Check for existing beliefs
-
-Call \`readKnowledge\` with relevant tags. Do not create duplicate beliefs. Update existing ones.
-
-### Step 3: Surface one belief at a time
-
-> "Based on our analysis today, I'd like to record the following belief:
->
-> **Claim**: Ghost paths consistently have dwell < 3 seconds and positional standard deviation < 0.15m.
-> **Confidence**: 0.78
-> **Tags**: ghost-detection, path-classification
->
-> Shall I save this to the knowledge graph?"
-
-Wait for explicit approval before calling \`writeBelief\`.
-
-### Step 4: Handle the response
-
-**Approved**: Call \`writeBelief\`. Confirm: "Saved. This will be available as a working hypothesis in all future sessions."
-**Pending (0.50–0.69)**: Store automatically as \`type: pending\`. Mention briefly.
-**Rejected**: Do not store. Move on.`;
+1. **Set confidence**: 0.90+ = multiple sessions with strong evidence; 0.70–0.89 = single session, clear evidence; 0.50–0.69 = plausible but limited (store as \`pending\` automatically, no approval needed); below 0.50 = skip.
+2. **Check for duplicates** — call \`readKnowledge\` with relevant tags. Update existing beliefs rather than creating duplicates.
+3. **Surface one at a time** — propose: "I'd like to record: **Claim**: [claim]. **Confidence**: [score]. **Tags**: [tags]. Shall I save this?" Wait for explicit approval before calling \`writeBelief\`.
+4. **On approval**: call \`writeBelief\`, confirm "Saved — available as a working hypothesis in future sessions." On rejection: move on.`;
 
 export const SKILL_SAVE_APPROVED_TEMPLATE = `# Skill: Save Approved Template
 
 ## Purpose
 
-Package a piece of analysis code into a reusable, parameterized template. Saved templates are stored in Supabase and available to all future sessions.
-
----
-
-## When to Use
-
-- The user says "save this," "remember how to do this," or "let's reuse this"
-- An analysis produces a clean, generalizable result and the user reacts positively
-- A classification algorithm is tested and shows acceptable performance
-
-Do **not** propose saving every analysis. Only code useful on future datasets belongs in templates.
-
----
+Package analysis code into a reusable parameterized template. Trigger when the user says "save this" / "reuse this," or when a clean generalizable result gets positive user reaction. Do **not** propose saving every analysis.
 
 ## Procedure
 
-### Step 1: Parameterize the code
-
-Replace hardcoded values with \`{{PLACEHOLDER}}\` tokens:
-- Column names that might vary → \`{{TARGET_ID_COLUMN}}\`, \`{{X_COLUMN}}\`
-- Time window filters → \`{{START_TIME}}\`, \`{{END_TIME}}\`
-- Classification thresholds → \`{{DWELL_THRESHOLD_SECONDS}}\`
-
-Show the parameterized version to the user before saving.
-
-### Step 2: Draft the template record
-
-- **Name**: short kebab-case slug with version (e.g., \`ghost-classifier-v1\`)
-- **Description**: one sentence answering what question this solves
-- **Tags**: topic tags for retrieval
-- **Parameters**: list of \`{{PLACEHOLDER}}\` tokens with descriptions
-
-### Step 3: Surface for approval
-
-> "Here's what I'll save:
-> **Name**: \`ghost-classifier-v1\`
-> **Description**: Classifies paths as ghost, passer-by, or engaged using dwell time and positional std thresholds.
-> Should I save this?"
-
-Wait for explicit approval, then call \`saveCodeTemplate\`.
-
----
+1. **Parameterize** — replace hardcoded values with \`{{PLACEHOLDER}}\` tokens (e.g. \`{{TARGET_ID_COLUMN}}\`, \`{{DWELL_THRESHOLD_SECONDS}}\`). Show the parameterized version before saving.
+2. **Draft the record** — name (kebab-case + version, e.g. \`ghost-classifier-v1\`), one-sentence description, tags, parameter list with descriptions.
+3. **Surface for approval** — "Here's what I'll save: **Name**: \`...\` **Description**: \`...\` Should I save this?" Wait for explicit approval, then call \`saveCodeTemplate\`.
 
 ## Template Evolution
 
-When a saved template is improved: save the new version with an incremented version number. Preserve the prior version — it's a historical record. Propose an Algorithm Version belief describing what changed and why.`;
+New version = incremented version number. Preserve the prior version. Propose an Algorithm Version belief describing what changed and why.`;
 
 export const SKILL_SUMMARIZE_SESSION = `# Skill: Summarize Session
 
 ## Purpose
 
-When a session closes, distill it into a structured summary that future sessions can load and act on. A session without a summary teaches nothing.
+When a session closes, distill it into a structured summary that future sessions can load. Trigger on: user clicks "New Chat," says "I'm done" / "wrap up," or 30+ minutes of inactivity. A missing summary means the next session starts cold.
 
----
+## Required Summary Sections
 
-## When to Use
-
-- The user clicks "New Chat"
-- The user says "I'm done," "let's wrap up," or "save our work"
-- The user has been inactive for more than 30 minutes (background summarization)
-
----
-
-## Required Sections
-
-**Objective** — what was the user trying to accomplish? One sentence.
-
-**Dataset** — filename, row count, time window analyzed, sensor(s) in scope.
-
-**Key Findings** — 3–5 most important things discovered. Each includes the observation (specific, with numbers), whether it confirmed/contradicted a belief, and confidence level.
-
-**Decisions Made** — threshold decisions, classification rules, analytical choices accepted. Future sessions should not re-litigate these.
-
-**Approved Beliefs** — belief IDs approved and written this session.
-
-**Approved Templates** — template names saved this session.
-
-**Open Questions** — what was the last line of inquiry? What would naturally come next?
-
-**Recommended Next Step** — one concrete suggestion for the next session.
-
----
+- **Objective** — one sentence: what the user was trying to accomplish
+- **Dataset** — filename, row count, time window, sensor(s)
+- **Key Findings** — 3–5 observations with specific values; note if each confirmed/contradicted a belief and at what confidence
+- **Decisions Made** — thresholds, classification rules, analytical choices; future sessions should not re-litigate
+- **Approved Beliefs** — IDs written this session
+- **Approved Templates** — names saved this session
+- **Open Questions** — last line of inquiry; what would naturally come next
+- **Recommended Next Step** — one concrete suggestion
 
 ## Procedure
 
 1. Review session messages and artifact history
-2. Write the summary in the structure above — be specific, reference actual values
-3. Call \`writeBelief\` with \`type: "session_summary"\` and the summary text
-4. Confirm to the user if present: "Session saved. Next time we pick up, I'll start from where we left off."
+2. Write the summary above — be specific, use actual values
+3. Call \`writeBelief\` with \`type: "session_summary"\`
+4. Confirm if user is present: "Session saved. Next time we pick up, I'll start from where we left off."
 
----
-
-## Notes
-
-- Session summaries are the primary mechanism for cross-session continuity. A missing summary means the next session starts cold.
-- The \`getSessionContext\` tool loads the 3 most recent session summaries.
-- Write summaries in the agent's voice — they are read by the agent, not the user.`;
+Write summaries in the agent's voice — they are read by the agent, not the user.`;
 
 // ─── Output Contract ───────────────────────────────────────────────────────────
 

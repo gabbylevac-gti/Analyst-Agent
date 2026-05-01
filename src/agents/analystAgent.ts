@@ -10,6 +10,7 @@
  */
 
 import { Agent } from "@mastra/core/agent";
+import type { CoreSystemMessage } from "@mastra/core/llm";
 import { anthropic } from "@ai-sdk/anthropic";
 import { executeCodeTool } from "../tools/executeCode";
 import { getSessionContextTool } from "../tools/getSessionContext";
@@ -33,7 +34,7 @@ import {
 // so that esbuild bundles them into the .mjs artifact on Mastra Platform.
 // No filesystem reads at runtime — the container does not include source .md files.
 
-const fullInstructions = [
+const instructionsText = [
   INSTRUCTIONS,
   "\n\n---\n\n## Skills\n\n",
   SKILL_DRAFT_DATA_DICTIONARY,
@@ -46,11 +47,22 @@ const fullInstructions = [
   OUTPUT_CONTRACT,
 ].join("\n\n---\n\n");
 
+// Cache the static system prompt so repeated requests don't re-count all
+// instruction tokens against the input token rate limit.
+const instructions: CoreSystemMessage = {
+  role: "system",
+  content: instructionsText,
+  providerOptions: {
+    anthropic: { cacheControl: { type: "ephemeral" } },
+  },
+};
+
 // ─── Agent ─────────────────────────────────────────────────────────────────────
 
 export const analystAgent = new Agent({
+  id: "analyst",
   name: "analyst",
-  instructions: fullInstructions,
+  instructions,
   model: anthropic("claude-sonnet-4-6"),
   tools: {
     executeCode: executeCodeTool,

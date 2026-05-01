@@ -10,6 +10,7 @@
     "@ai-sdk/anthropic": "latest",
     "@e2b/code-interpreter": "latest",
     "@mastra/core": "latest",
+    "@mastra/observability": "^1.11.0",
     "@supabase/supabase-js": "latest"
   },
   "devDependencies": {

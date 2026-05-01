@@ -6,13 +6,15 @@ Paste the following prompt into Lovable to generate the full application.
 
 ## PROMPT
 
-Build a data analysis chat application called **Analyst**. It is a tool for a small internal team at GTI Studio to upload CSV files and explore data through natural language conversation with an AI agent.
+Build a data analysis chat application called **Analyst Agent**. It is a tool for a small internal team at GTI Studio to upload CSV files and explore data through natural language conversation with an AI agent.
 
 ---
 
 ### Authentication
 
 Use Supabase Google OAuth. On login, verify that the user's email ends in `@gtistudio.com`. If it does not, show an error message: "Access is restricted to @gtistudio.com accounts." and sign them out. Store the authenticated user's email and id in the session. No user-facing roles or permissions — all authenticated users see the same shared workspace.
+
+Google OAuth is already configured in the Supabase project with a Google Cloud OAuth client. Once this app is published, the Lovable app URL must be added as an Authorized Redirect URI in Google Cloud Console for the existing OAuth client, and the Client ID and Secret must be entered in Supabase → Authentication → Providers → Google. Implement the sign-in flow using `supabase.auth.signInWithOAuth({ provider: 'google' })`.
 
 ---
 
@@ -43,85 +45,40 @@ Two-panel layout:
 
 ### Supabase Schema
 
-Create the following tables in Supabase. Use the Supabase client (already connected) to read and write these.
+The Supabase project is already configured — tables, RLS policies, and storage bucket are all created. Do not run any `create table` statements. Connect to the existing project using the environment variables below and use the Supabase client to read and write these tables:
 
-```sql
--- Sessions: one per chat conversation
-create table sessions (
-  id uuid primary key default gen_random_uuid(),
-  title text,
-  created_at timestamptz default now(),
-  updated_at timestamptz default now(),
-  csv_storage_path text,      -- path in Supabase Storage
-  csv_public_url text,         -- public URL for the agent to download
-  csv_filename text,
-  objective text               -- user's stated goal for this session
-);
+**`sessions`** — one row per chat conversation
+- `id` uuid PK
+- `title` text
+- `created_at`, `updated_at` timestamptz
+- `csv_storage_path` text — path in Supabase Storage
+- `csv_public_url` text — public URL for the agent to download
+- `csv_filename` text
+- `objective` text — user's stated goal
 
--- Messages: chat history
-create table messages (
-  id uuid primary key default gen_random_uuid(),
-  session_id uuid references sessions(id) on delete cascade,
-  role text not null check (role in ('user', 'assistant')),
-  content text not null,       -- text content of the message
-  artifact_html text,          -- rendered HTML for chart/table artifacts (nullable)
-  artifact_type text,          -- 'chart' | 'table' | 'text' | 'multi' | null
-  artifact_title text,
-  created_at timestamptz default now()
-);
+**`messages`** — chat history
+- `id` uuid PK
+- `session_id` uuid → sessions
+- `role` text (`'user'` or `'assistant'`)
+- `content` text
+- `artifact_html` text (nullable) — rendered HTML for chart/table artifacts
+- `artifact_type` text (nullable) — `'chart'` | `'table'` | `'text'` | `'multi'`
+- `artifact_title` text (nullable)
+- `created_at` timestamptz
 
--- Datasets: approved data dictionaries
-create table datasets (
-  id uuid primary key default gen_random_uuid(),
-  filename text,
-  column_signature text,       -- comma-separated column names for schema matching
-  schema_json jsonb,
-  data_dictionary_json jsonb,
-  deployment_context text,
-  upload_session_id uuid references sessions(id),
-  created_at timestamptz default now()
-);
+**`datasets`** — approved data dictionaries
+- `id` uuid PK, `filename` text, `column_signature` text, `schema_json` jsonb, `data_dictionary_json` jsonb, `deployment_context` text, `upload_session_id` uuid → sessions, `created_at` timestamptz
 
--- Knowledge beliefs (written by agent, approved by user)
-create table knowledge_beliefs (
-  id uuid primary key default gen_random_uuid(),
-  content text not null,
-  type text not null,          -- 'take-away' | 'belief' | 'false-belief' | 'pending' | 'algorithm-version'
-  confidence numeric(3,2),
-  tags text[],
-  evidence_session_id uuid references sessions(id),
-  updated_at timestamptz,
-  created_at timestamptz default now()
-);
+**`knowledge_beliefs`** — agent-written beliefs approved by user
+- `id` uuid PK, `content` text, `type` text, `confidence` numeric(3,2), `tags` text[], `evidence_session_id` uuid → sessions, `updated_at` timestamptz, `created_at` timestamptz
 
--- Code templates (approved Python analysis functions)
-create table code_templates (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  description text,
-  code text not null,
-  tags text[],
-  parameters jsonb,
-  version text,
-  source_session_id uuid references sessions(id),
-  approved_at timestamptz default now()
-);
+**`code_templates`** — approved Python analysis functions
+- `id` uuid PK, `name` text, `description` text, `code` text, `tags` text[], `parameters` jsonb, `version` text, `source_session_id` uuid → sessions, `approved_at` timestamptz
 
--- Session summaries (produced by summarize-session skill)
-create table session_summaries (
-  id uuid primary key default gen_random_uuid(),
-  session_id uuid references sessions(id),
-  summary_text text not null,
-  key_findings text[],
-  approved_belief_ids text[],
-  approved_template_ids text[],
-  created_at timestamptz default now()
-);
-```
+**`session_summaries`** — produced by the summarize-session skill
+- `id` uuid PK, `session_id` uuid → sessions, `summary_text` text, `key_findings` text[], `approved_belief_ids` text[], `approved_template_ids` text[], `created_at` timestamptz
 
-Enable Row Level Security on all tables with a policy that allows all operations for authenticated users only.
-
-Create a Supabase Storage bucket called `csv-uploads` with public read access.
+Storage bucket `csv-uploads` already exists with public read access.
 
 ---
 
@@ -142,7 +99,7 @@ When the user clicks the file upload button (paperclip icon) or drags a file int
 
 The agent runs on Mastra Platform. Its base URL is stored in the environment variable `VITE_MASTRA_API_URL`.
 
-**Streaming chat endpoint**: `POST {VITE_MASTRA_API_URL}/agents/analyst/stream`
+**Streaming chat endpoint**: `POST {VITE_MASTRA_API_URL}/api/agents/analyst/stream`
 
 Request body:
 ```json
@@ -188,7 +145,7 @@ Each message in the chat thread:
 5. First user message becomes the session `objective` and `title`
 
 When a session is closed (user opens a new chat while an existing session has messages):
-- POST to `{VITE_MASTRA_API_URL}/agents/analyst/generate` with message: `"The user is closing this session. Please call summarize-session and write a session summary to Supabase using the writeBelief tool with type: session_summary and sessionId: {sessionId}."`
+- POST to `{VITE_MASTRA_API_URL}/api/agents/analyst/generate` with message: `"The user is closing this session. Please call summarize-session and write a session summary to Supabase using the writeBelief tool with type: session_summary and sessionId: {sessionId}."`
 - This triggers the agent to produce and save the session summary in the background.
 
 ---
@@ -221,9 +178,9 @@ This panel is read-only — the agent manages writes.
 ### Environment Variables
 
 ```
-VITE_MASTRA_API_URL=https://your-project.mastra.ai
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
+VITE_MASTRA_API_URL=https://analyst-agent.server.mastra.cloud
+VITE_SUPABASE_URL=https://bgmfxooysgqqqjhelhap.supabase.co
+VITE_SUPABASE_ANON_KEY=sb_publishable_lGZG7mSMt0NbbRXhT8roOg_Nbk5X6_Q
 ```
 
 ---
