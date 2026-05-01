@@ -12,9 +12,24 @@
 
 import { Mastra } from "@mastra/core";
 import { analystAgent } from "../agents/analystAgent";
+import {
+  Observability,
+  DefaultExporter,
+  CloudExporter,
+  SensitiveDataFilter,
+} from "@mastra/observability";
 
 export const mastra = new Mastra({
   agents: {
     analyst: analystAgent,
   },
+  observability: new Observability({
+    configs: {
+      default: {
+        serviceName: "analyst-agent",
+        exporters: [new DefaultExporter(), new CloudExporter()],
+        spanOutputProcessors: [new SensitiveDataFilter()],
+      },
+    },
+  }),
 });
