@@ -10,8 +10,7 @@
 
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import pkg from "@e2b/code-interpreter";
-const { CodeInterpreter } = pkg;
+import { Sandbox } from "@e2b/code-interpreter";
 
 // ─── Output envelope schema ────────────────────────────────────────────────────
 
@@ -52,7 +51,7 @@ export const executeCodeTool = createTool({
   execute: async (context) => {
     const { code, csvUrl } = context;
 
-    const sandbox = await CodeInterpreter.create({
+    const sandbox = await Sandbox.create({
       apiKey: process.env.E2B_API_KEY,
     });
 
@@ -63,7 +62,7 @@ export const executeCodeTool = createTool({
         if (!response.ok) {
           throw new Error(`Failed to fetch CSV from ${csvUrl}: ${response.statusText}`);
         }
-        const csvBuffer = Buffer.from(await response.arrayBuffer());
+        const csvBuffer = await response.arrayBuffer();
         await sandbox.files.write("/sandbox/upload.csv", csvBuffer);
       }
 
@@ -102,7 +101,7 @@ export const executeCodeTool = createTool({
         error: (err as Error).message,
       };
     } finally {
-      await sandbox.close();
+      await sandbox.kill();
     }
   },
 });
