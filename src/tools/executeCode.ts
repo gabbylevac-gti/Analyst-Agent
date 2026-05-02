@@ -43,9 +43,10 @@ export const executeCodeTool = createTool({
       .describe("Supabase Storage URL for the session CSV file. Downloaded and written to /sandbox/upload.csv before execution."),
   }),
   outputSchema: z.object({
-    envelope: artifactSchema.optional(),
+    envelope: artifactSchema,
     stdout: z.string(),
     stderr: z.string(),
+    exitCode: z.number(),
     error: z.string().optional(),
   }),
   execute: async (context) => {
@@ -77,18 +78,31 @@ export const executeCodeTool = createTool({
 
       const stdout = exec.logs.stdout.join("\n");
       const stderr = exec.logs.stderr.join("\n");
+      const exitCode = exec.exitCode ?? (exec.error ? 1 : 0);
 
       // ── Parse output envelope from final stdout line ───────────────────────
       const lines = stdout.trim().split("\n").filter(Boolean);
       const lastLine = lines[lines.length - 1];
 
-      let envelope: z.infer<typeof artifactSchema> | undefined;
-      if (lastLine) {
+      let envelope: z.infer<typeof artifactSchema>;
+      if (!lastLine) {
+        // Empty stdout — script crashed before printing the output envelope.
+        // Synthesize an error envelope so the agent retries rather than
+        // silently moving on with an undefined result.
+        envelope = {
+          type: "error",
+          title: "No Output",
+          summary: "Script produced no stdout. It likely crashed before reaching the final print().",
+          message: exec.error
+            ? `${exec.error.name}: ${exec.error.value}`
+            : "Script exited without printing a JSON envelope.",
+          traceback: exec.error?.traceback?.join("\n"),
+        };
+      } else {
         try {
           const parsed = JSON.parse(lastLine);
           envelope = artifactSchema.parse(parsed);
         } catch (parseError) {
-          // Final line was not a valid envelope — surface as error
           envelope = {
             type: "error",
             title: "Output Contract Violation",
@@ -98,12 +112,18 @@ export const executeCodeTool = createTool({
         }
       }
 
-      return { envelope, stdout, stderr };
+      return { envelope, stdout, stderr, exitCode };
     } catch (err) {
       return {
-        envelope: undefined,
+        envelope: {
+          type: "error" as const,
+          title: "Sandbox Error",
+          summary: "The E2B sandbox threw an exception before execution completed.",
+          message: (err as Error).message,
+        },
         stdout: "",
         stderr: "",
+        exitCode: 1,
         error: (err as Error).message,
       };
     } finally {
