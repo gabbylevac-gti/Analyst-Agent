@@ -154,6 +154,10 @@ When a user uploads a CSV, produce a human-readable data dictionary for review a
 
 Do not proceed to analysis without an approved dictionary. If the user skips approval, remind them: "Before I analyze, let me confirm the data dictionary so I understand what each field means."
 
+## DR6000 API Data — Skip This Skill
+
+If the session data came from the DR6000 API (via \`fetchSensorData\`), the schema is fully defined in \`dr6000-schema.md\` in your static knowledge. Do NOT draft a dictionary — proceed directly to analysis. The schema is authoritative; no user confirmation is needed unless the user has deployment-specific notes to add (coordinate orientation, zone names, etc.).
+
 ## Procedure
 
 1. **Inspect the schema** — call \`executeCode\` with a script that reads \`/sandbox/upload.csv\` and profiles each column: dtype, null_count, unique_count, sample_values (5), and min/max/mean for numeric columns. Output as a \`text\` envelope.
@@ -636,6 +640,63 @@ At the start of any new deployment's data, confirm with the user:
 5. Is there a known reflective surface at any specific (x, y) that would explain ghost clustering?
 
 Store this in the data dictionary for the session and write it to the dataset record in Supabase.`;
+
+export const DOMAIN_DR6000_SCHEMA = `# DR6000 API — Data Dictionary
+
+Data retrieved via the DR6000 API has a fixed, known schema. No data dictionary drafting is required for API-sourced sessions.
+
+## Sessions Report
+
+One row per person-visit (one target entering and leaving the sensor's field of view).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| processed_at | timestamp | When the API request was processed. Do NOT use for temporal analysis. |
+| account_id | string | Account ID associated with the sensor. |
+| device_id | string | ID of the edge device the sensor is associated with. |
+| log_creation_time | timestamp | Timestamp of the data point. Use this for ALL temporal analysis. |
+| timezone_offset | integer | Numeric timezone offset (e.g. -300 = UTC-5). |
+| timezone_label | string | Timezone name (e.g. America/New_York). |
+| sensor_id | string | ID of the sensor. |
+| sensor_name | string | User-defined name of the sensor. |
+| mac_address | string | MAC address of the edge device. |
+| target_id | uuid | Unique ID for the tracked target during this visit. Not persistent across separate appearances — a new target_id is assigned each time a person re-enters the field of view. |
+| dwell_tracking_area_sec | float | Seconds the target spent in the sensor's full field of view (Tracking Area). Primary engagement signal. |
+| zone_dwell_times_json | string | JSON string of zone names and dwell times per zone (e.g. {"zone 1","3.2";"zone 2","0.0"}). |
+| proximity_m | float | Closest distance in meters the target reached to the sensor. |
+
+## Paths Report
+
+One row per position reading, approximately every 1 second per target. Use this for spatial/movement analysis.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| processed_at | timestamp | When the API request was processed. Do NOT use for temporal analysis. |
+| account_id | string | Account ID associated with the sensor. |
+| device_id | string | ID of the edge device. |
+| log_creation_time | timestamp | Timestamp of the position reading. Use this for ALL temporal analysis. |
+| timezone_offset | integer | Numeric timezone offset. |
+| timezone_label | string | Timezone name. |
+| sensor_id | string | ID of the sensor. |
+| sensor_name | string | User-defined name of the sensor. |
+| mac_address | string | MAC address of the edge device. |
+| target_id | uuid | Unique ID for the tracked target. Same semantics as Sessions report. |
+| x_m | float | X coordinate in meters. 0 = directly in front of sensor centerline. Negative = left of sensor. Positive = right of sensor. |
+| y_m | float | Y coordinate in meters. 0 = directly below sensor. Positive = moving away from sensor (deeper into zone). |
+
+## Report Selection Guide
+
+| Use Case | Report Type |
+|----------|-------------|
+| How many people visited? | sessions |
+| Average or total dwell time | sessions |
+| Engagement rate (dwell > threshold) | sessions |
+| Zone-level dwell analysis | sessions |
+| Proximity / closest approach | sessions |
+| Where did people walk? (heatmap) | paths |
+| Path trajectories and movement patterns | paths |
+| Ghost path detection (requires x/y variance) | paths |
+| Spatial clustering analysis | paths |`;
 
 export const SEED_BELIEFS = `# Approved Beliefs — Seed File
 

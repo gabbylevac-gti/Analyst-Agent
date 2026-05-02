@@ -45,7 +45,12 @@ export const fetchSensorDataTool = createTool({
     reportType: z
       .enum(["sessions", "paths"])
       .default("sessions")
-      .describe("DR6000 report type. Use 'sessions' for dwell/engagement metrics, 'paths' for x/y coordinates."),
+      .describe(
+        "DR6000 report type. " +
+        "Use 'sessions' when the question involves people counts, dwell time, engagement rates, proximity, or zone analysis — one row per person-visit. " +
+        "Use 'paths' when the question involves spatial movement, trajectories, x/y position data, heatmaps, or ghost path detection — one row per ~1-second position reading. " +
+        "Default to 'sessions' unless coordinate/spatial data is explicitly needed."
+      ),
   }),
   outputSchema: z.object({
     success: z.boolean(),

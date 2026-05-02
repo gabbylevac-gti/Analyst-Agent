@@ -20,6 +20,7 @@ import {
   DOMAIN_PATH_CLASSIFICATION,
   DOMAIN_RETAIL_CONTEXT,
   SEED_BELIEFS,
+  DOMAIN_DR6000_SCHEMA,
 } from "../embedded-knowledge";
 
 // ─── Supabase client ───────────────────────────────────────────────────────────
@@ -42,6 +43,7 @@ function loadStaticKnowledge(): string {
     ["path-classification.md", DOMAIN_PATH_CLASSIFICATION],
     ["retail-context.md", DOMAIN_RETAIL_CONTEXT],
     ["approved-takeaways.md", SEED_BELIEFS],
+    ["dr6000-schema.md", DOMAIN_DR6000_SCHEMA],
   ]
     .map(([name, content]) => `### ${name}\n\n${content}`)
     .join("\n\n---\n\n");
