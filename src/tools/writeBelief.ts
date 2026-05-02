@@ -115,7 +115,7 @@ export const writeBeliefTool = createTool({
         };
       }
 
-      const approvalStatus = context.pendingApproval ? "pending" : "approved";
+      const approvalStatus: "pending" | "approved" = context.pendingApproval ? "pending" : "approved";
 
       // ── Update existing belief ─────────────────────────────────────────
       if (context.existingBeliefId) {

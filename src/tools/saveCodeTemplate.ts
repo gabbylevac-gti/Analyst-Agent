@@ -93,7 +93,7 @@ export const saveCodeTemplateTool = createTool({
         .single();
 
       const alreadyExisted = !!existing;
-      const approvalStatus = context.pendingApproval ? "pending" : "approved";
+      const approvalStatus: "pending" | "approved" = context.pendingApproval ? "pending" : "approved";
 
       // ── Insert the template ────────────────────────────────────────────
       const { data, error } = await supabase

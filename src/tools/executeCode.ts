@@ -78,7 +78,7 @@ export const executeCodeTool = createTool({
 
       const stdout = exec.logs.stdout.join("\n");
       const stderr = exec.logs.stderr.join("\n");
-      const exitCode = exec.exitCode ?? (exec.error ? 1 : 0);
+      const exitCode = exec.error ? 1 : 0;
 
       // ── Parse output envelope from final stdout line ───────────────────────
       const lines = stdout.trim().split("\n").filter(Boolean);
@@ -96,7 +96,7 @@ export const executeCodeTool = createTool({
           message: exec.error
             ? `${exec.error.name}: ${exec.error.value}`
             : "Script exited without printing a JSON envelope.",
-          traceback: exec.error?.traceback?.join("\n"),
+          traceback: exec.error?.traceback ?? undefined,
         };
       } else {
         try {

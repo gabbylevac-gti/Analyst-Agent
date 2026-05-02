@@ -65,7 +65,7 @@ export const saveDataDictionaryTool = createTool({
     const supabase = getSupabase();
 
     try {
-      const approvalStatus = context.pendingApproval ? "pending" : "approved";
+      const approvalStatus: "pending" | "approved" = context.pendingApproval ? "pending" : "approved";
 
       // Check for an existing record with this column signature
       const { data: existing } = await supabase
