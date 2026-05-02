@@ -14,8 +14,13 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
-import * as fs from "fs";
-import * as path from "path";
+import {
+  OUTPUT_CONTRACT,
+  DOMAIN_RADAR_SENSORS,
+  DOMAIN_PATH_CLASSIFICATION,
+  DOMAIN_RETAIL_CONTEXT,
+  SEED_BELIEFS,
+} from "../embedded-knowledge";
 
 // ─── Supabase client ───────────────────────────────────────────────────────────
 
@@ -27,21 +32,18 @@ function getSupabase() {
 }
 
 // ─── Static knowledge loader ───────────────────────────────────────────────────
+// Uses embedded constants instead of filesystem reads so this works on
+// Mastra Platform where source .md files are not included in the deployment.
 
 function loadStaticKnowledge(): string {
-  const files = [
-    path.join("knowledge", "output-contract.md"),
-    path.join("knowledge", "domain", "radar-sensors.md"),
-    path.join("knowledge", "domain", "path-classification.md"),
-    path.join("knowledge", "domain", "retail-context.md"),
-    path.join("knowledge", "beliefs", "approved-takeaways.md"),
-  ];
-
-  return files
-    .map((f) => {
-      if (!fs.existsSync(f)) return `[Not found: ${f}]`;
-      return `### ${path.basename(f)}\n\n${fs.readFileSync(f, "utf-8")}`;
-    })
+  return [
+    ["output-contract.md", OUTPUT_CONTRACT],
+    ["radar-sensors.md", DOMAIN_RADAR_SENSORS],
+    ["path-classification.md", DOMAIN_PATH_CLASSIFICATION],
+    ["retail-context.md", DOMAIN_RETAIL_CONTEXT],
+    ["approved-takeaways.md", SEED_BELIEFS],
+  ]
+    .map(([name, content]) => `### ${name}\n\n${content}`)
     .join("\n\n---\n\n");
 }
 
