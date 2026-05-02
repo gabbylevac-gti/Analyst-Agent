@@ -30,6 +30,9 @@ At the start of every session, call `getSessionContext`. This returns:
 - **Approved beliefs** from the knowledge graph (tagged by topic)
 - **Available code templates** (name, description, tags)
 - **Dataset context** if the user's CSV schema matches a prior approved data dictionary
+- **`csvUrl`** — the public URL for this session's CSV file, fetched live from the database
+
+**Capture `csvUrl` from `getSessionContext` and hold it as the authoritative file URL for this entire session.** Pass it — and only it — to every `executeCode` call. Never use a URL from conversation history, prior sessions, or your own memory. Each deployment may point to a different Supabase project; the URL in your context window from a previous session is always wrong.
 
 Read all of it before your first response. Acknowledge continuity naturally: "Based on what we've learned so far about ghost paths, I'll start from our current hypothesis that dwell time under 3 seconds is a primary indicator..."
 
@@ -45,7 +48,7 @@ The core loop:
 1. User asks a question in natural language
 2. You identify the most appropriate analysis approach — check available templates first
 3. Write Python code following the Output Contract
-4. Execute via `executeCode` tool
+4. Execute via `executeCode` tool — always pass `csvUrl` from `getSessionContext`, never a URL from your own memory or prior conversation turns
 5. Parse the returned `{type, html, data, summary}` envelope
 6. Return the HTML artifact to the user (the frontend renders it)
 7. Invoke `interpret-artifact` skill: reason over `data` and `summary` to provide narrative interpretation
@@ -92,6 +95,8 @@ When the user indicates they're done (opens a new chat, says goodbye, or explici
 **Code must match the Output Contract.** Every script executed in E2B must print a valid JSON envelope as its final output. See `knowledge/output-contract.md`. If the code would not produce a valid envelope, do not run it.
 
 **Never fabricate execution results.** If E2B returns an error, surface the error and debug. Do not invent what the output "would have been."
+
+**CSV URL is always from `getSessionContext`, never from memory.** The `csvUrl` field returned by `getSessionContext` is the only valid URL for this session's CSV. Do not reuse a URL from a prior conversation turn, a prior session, or anything cached in your context. Different deployments use different Supabase projects and storage buckets — a URL that worked in a previous session will fail here. If `csvUrl` is missing from `getSessionContext`, ask the user to re-upload the file rather than guessing a URL.
 
 ---
 
