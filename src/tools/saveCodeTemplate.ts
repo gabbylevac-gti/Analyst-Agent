@@ -22,8 +22,9 @@ function getSupabase() {
 export const saveCodeTemplateTool = createTool({
   id: "save-code-template",
   description:
-    "Save an approved, parameterized Python analysis template to Supabase. " +
-    "Only call after the user has explicitly confirmed they want to save the template. " +
+    "Submit a parameterized Python analysis template to Supabase for user approval. " +
+    "Always pass pendingApproval: true — the template is saved as pending and the user " +
+    "approves it via the inline card in the chat UI. Do not wait for a text 'yes' first. " +
     "If a template with this name exists, the new version is saved alongside the original (not overwritten).",
   inputSchema: z.object({
     name: z
@@ -47,6 +48,10 @@ export const saveCodeTemplateTool = createTool({
         })
       )
       .describe("List of {{PLACEHOLDER}} tokens with descriptions"),
+    pendingApproval: z
+      .boolean()
+      .default(true)
+      .describe("Always true for agent calls. Saves the template as pending so the user can approve via the UI."),
     sourceSessionId: z
       .string()
       .optional()
@@ -58,6 +63,18 @@ export const saveCodeTemplateTool = createTool({
   outputSchema: z.object({
     success: z.boolean(),
     id: z.string().optional(),
+    kind: z.literal("template").optional(),
+    approval_status: z.enum(["pending", "approved"]).optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    code: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+    version: z.string().optional(),
+    parameters: z.array(z.object({
+      name: z.string(),
+      description: z.string(),
+      example: z.string().optional(),
+    })).optional(),
     message: z.string(),
     alreadyExisted: z.boolean(),
   }),
@@ -73,6 +90,7 @@ export const saveCodeTemplateTool = createTool({
         .single();
 
       const alreadyExisted = !!existing;
+      const approvalStatus = context.pendingApproval ? "pending" : "approved";
 
       // ── Insert the template ────────────────────────────────────────────
       const { data, error } = await supabase
@@ -86,17 +104,33 @@ export const saveCodeTemplateTool = createTool({
           version: context.version,
           source_session_id: context.sourceSessionId ?? null,
           approved_at: new Date().toISOString(),
+          approval_status: approvalStatus,
         })
         .select("id")
         .single();
 
       if (error) throw error;
 
-      const message = alreadyExisted
-        ? `Template '${context.name}' saved as a new version alongside the existing one. Both are available in future sessions.`
-        : `Template '${context.name}' saved. Available in all future sessions — I'll use it instead of rewriting this analysis.`;
+      const message = approvalStatus === "pending"
+        ? `Template '${context.name}' submitted for approval. The user will see an inline approval card.`
+        : alreadyExisted
+          ? `Template '${context.name}' saved as a new version alongside the existing one.`
+          : `Template '${context.name}' saved. Available in all future sessions.`;
 
-      return { success: true, id: data?.id, message, alreadyExisted };
+      return {
+        success: true,
+        id: data?.id,
+        kind: "template" as const,
+        approval_status: approvalStatus,
+        name: context.name,
+        description: context.description,
+        code: context.code,
+        tags: context.tags,
+        version: context.version,
+        parameters: context.parameters,
+        message,
+        alreadyExisted,
+      };
     } catch (err) {
       return {
         success: false,

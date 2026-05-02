@@ -115,6 +115,7 @@ export const getSessionContextTool = createTool({
     let beliefsQuery = supabase
       .from("knowledge_beliefs")
       .select("id, content, type, confidence, tags, created_at")
+      .eq("approval_status", "approved")
       .order("confidence", { ascending: false })
       .limit(50);
 
@@ -128,6 +129,7 @@ export const getSessionContextTool = createTool({
     const { data: codeTemplates } = await supabase
       .from("code_templates")
       .select("name, description, tags, version")
+      .eq("approval_status", "approved")
       .order("approved_at", { ascending: false })
       .limit(20);
 
@@ -160,6 +162,7 @@ export const getSessionContextTool = createTool({
         .from("datasets")
         .select("filename, schema_json, data_dictionary_json, deployment_context")
         .eq("column_signature", csvColumnSignature)
+        .eq("approval_status", "approved")
         .not("data_dictionary_json", "is", null)
         .order("created_at", { ascending: false })
         .limit(1)

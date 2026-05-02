@@ -22,8 +22,9 @@ function getSupabase() {
 export const writeBeliefTool = createTool({
   id: "write-belief",
   description:
-    "Write an approved belief, false-belief, or session summary to the knowledge graph in Supabase. " +
-    "Only call this after the user has explicitly approved the belief content. " +
+    "Submit a belief, false-belief, or session summary to Supabase. " +
+    "For beliefs, always pass pendingApproval: true — the record is saved as pending and the user " +
+    "approves it via the inline card in the chat UI. Do not wait for a text 'yes' first. " +
     "For session summaries, set type to 'session_summary' — these go to session_summaries table.",
   inputSchema: z.object({
     content: z.string().describe("The belief content in plain language"),
@@ -38,6 +39,10 @@ export const writeBeliefTool = createTool({
     tags: z
       .array(z.string())
       .describe("Topic tags for retrieval (e.g. ['ghost-detection', 'path-classification'])"),
+    pendingApproval: z
+      .boolean()
+      .default(true)
+      .describe("Always true for agent calls. Saves the belief as pending so the user can approve via the UI."),
     evidenceSessionId: z
       .string()
       .optional()
@@ -68,6 +73,12 @@ export const writeBeliefTool = createTool({
   outputSchema: z.object({
     success: z.boolean(),
     id: z.string().optional(),
+    kind: z.literal("belief").optional(),
+    approval_status: z.enum(["pending", "approved"]).optional(),
+    content: z.string().optional(),
+    type: z.string().optional(),
+    confidence: z.number().optional(),
+    tags: z.array(z.string()).optional(),
     message: z.string(),
   }),
   execute: async (context) => {
@@ -100,6 +111,8 @@ export const writeBeliefTool = createTool({
         };
       }
 
+      const approvalStatus = context.pendingApproval ? "pending" : "approved";
+
       // ── Update existing belief ─────────────────────────────────────────
       if (context.existingBeliefId) {
         const { data, error } = await supabase
@@ -110,6 +123,7 @@ export const writeBeliefTool = createTool({
             confidence: context.confidence,
             tags: context.tags,
             evidence_session_id: context.evidenceSessionId,
+            approval_status: approvalStatus,
             updated_at: new Date().toISOString(),
           })
           .eq("id", context.existingBeliefId)
@@ -120,7 +134,15 @@ export const writeBeliefTool = createTool({
         return {
           success: true,
           id: data?.id,
-          message: `Belief updated (confidence: ${context.confidence}). Available in all future sessions.`,
+          kind: "belief" as const,
+          approval_status: approvalStatus,
+          content: context.content,
+          type: context.type,
+          confidence: context.confidence,
+          tags: context.tags,
+          message: approvalStatus === "pending"
+            ? "Belief update submitted for approval."
+            : `Belief updated (confidence: ${context.confidence}). Available in all future sessions.`,
         };
       }
 
@@ -133,6 +155,7 @@ export const writeBeliefTool = createTool({
           confidence: context.confidence,
           tags: context.tags,
           evidence_session_id: context.evidenceSessionId ?? null,
+          approval_status: approvalStatus,
         })
         .select("id")
         .single();
@@ -142,7 +165,15 @@ export const writeBeliefTool = createTool({
       return {
         success: true,
         id: data?.id,
-        message: `Belief saved (${context.type}, confidence: ${context.confidence}). Available as a hypothesis in all future sessions.`,
+        kind: "belief" as const,
+        approval_status: approvalStatus,
+        content: context.content,
+        type: context.type,
+        confidence: context.confidence,
+        tags: context.tags,
+        message: approvalStatus === "pending"
+          ? "Belief submitted for approval. The user will see an inline approval card."
+          : `Belief saved (${context.type}, confidence: ${context.confidence}). Available as a hypothesis in all future sessions.`,
       };
     } catch (err) {
       return {

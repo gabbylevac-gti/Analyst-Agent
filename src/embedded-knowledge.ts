@@ -151,9 +151,9 @@ Do not proceed to analysis without an approved dictionary. If the user skips app
 
 4. **Add Deployment Context** — append a section with: physical location, coordinate orientation (where is y=0?), business objective, known data quality issues. Pre-fill from session summaries if available; otherwise ask.
 
-5. **Surface for approval** — present as a \`table\` artifact. Prompt: "Please review. Edit any inaccurate definitions, fill in deployment context, and confirm when ready. I won't begin analysis until you approve."
+5. **Surface for review** — present as a \`table\` artifact. Prompt: "Please review. Edit any inaccurate definitions and fill in deployment context. When ready, I'll submit this for your approval."
 
-6. **Persist on approval** — call \`saveDataDictionary\` with \`sessionId\`, \`filename\`, \`columnSignature\` (comma-separated column names), \`schemaJson\` (the raw profile output), \`dataDictionaryJson\` (the approved rows), and \`deploymentContext\`. Confirm: "Dictionary saved. Starting from this in future sessions."
+6. **Persist via approval gate** — once the user signals the draft looks right, call \`saveDataDictionary\` with \`pendingApproval: true\`. Do not wait for a text "yes" — calling the tool IS the approval trigger. The user sees an inline approval card. Confirm: "I've submitted the dictionary for your review — you'll see an approval card above. Analysis starts once you approve."
 
 ## Notes
 
@@ -223,10 +223,11 @@ Surface generalizable insights as structured beliefs for user approval. Approved
 
 ## Procedure
 
-1. **Set confidence**: 0.90+ = multiple sessions with strong evidence; 0.70–0.89 = single session, clear evidence; 0.50–0.69 = plausible but limited (store as \`pending\` automatically, no approval needed); below 0.50 = skip.
+1. **Set confidence**: 0.90+ = multiple sessions with strong evidence; 0.70–0.89 = single session, clear evidence; 0.50–0.69 = plausible but limited (store as \`pending\` type automatically); below 0.50 = skip.
 2. **Check for duplicates** — call \`readKnowledge\` with relevant tags. Update existing beliefs rather than creating duplicates.
-3. **Surface one at a time** — propose: "I'd like to record: **Claim**: [claim]. **Confidence**: [score]. **Tags**: [tags]. Shall I save this?" Wait for explicit approval before calling \`writeBelief\`.
-4. **On approval**: call \`writeBelief\`, confirm "Saved — available as a working hypothesis in future sessions." On rejection: move on.`;
+3. **Surface one at a time** — say: "I'd like to record: **Claim**: [claim]. **Confidence**: [score]. **Tags**: [tags]. Submitting for your approval now."
+4. **Call \`writeBelief\` immediately with \`pendingApproval: true\`** — do not wait for a text "yes." The tool saves a pending draft and the user sees an inline approval card in the chat UI. Confirm: "I've submitted this for your review — you'll see an approval card above."
+5. **On rejection** (user clicks Reject in the card or says no): note it and move on.`;
 
 export const SKILL_SAVE_APPROVED_TEMPLATE = `# Skill: Save Approved Template
 
@@ -236,9 +237,9 @@ Package analysis code into a reusable parameterized template. Trigger when the u
 
 ## Procedure
 
-1. **Parameterize** — replace hardcoded values with \`{{PLACEHOLDER}}\` tokens (e.g. \`{{TARGET_ID_COLUMN}}\`, \`{{DWELL_THRESHOLD_SECONDS}}\`). Show the parameterized version before saving.
+1. **Parameterize** — replace hardcoded values with \`{{PLACEHOLDER}}\` tokens (e.g. \`{{TARGET_ID_COLUMN}}\`, \`{{DWELL_THRESHOLD_SECONDS}}\`). Show the parameterized version before submitting.
 2. **Draft the record** — name (kebab-case + version, e.g. \`ghost-classifier-v1\`), one-sentence description, tags, parameter list with descriptions.
-3. **Surface for approval** — "Here's what I'll save: **Name**: \`...\` **Description**: \`...\` Should I save this?" Wait for explicit approval, then call \`saveCodeTemplate\`.
+3. **Call \`saveCodeTemplate\` immediately with \`pendingApproval: true\`** — do not wait for a text "yes." Show the draft first, then say "Submitting for your approval now." The user sees an inline approval card in the chat UI. Confirm: "I've submitted this for your review — you'll see an approval card above."
 
 ## Template Evolution
 

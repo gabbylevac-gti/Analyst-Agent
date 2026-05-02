@@ -22,7 +22,9 @@ function getSupabase() {
 export const saveDataDictionaryTool = createTool({
   id: "save-data-dictionary",
   description:
-    "Persist an approved data dictionary to the datasets table. Call only after explicit user approval. " +
+    "Submit a data dictionary to the datasets table for user approval. " +
+    "Always pass pendingApproval: true — the record is saved as pending and the user " +
+    "approves it via the inline card in the chat UI. Do not wait for a text 'yes' first. " +
     "Matches by column_signature — uploading the same schema again updates the existing record.",
   inputSchema: z.object({
     sessionId: z.string().describe("Current session ID (stored as upload_session_id)"),
@@ -36,6 +38,10 @@ export const saveDataDictionaryTool = createTool({
     dataDictionaryJson: z
       .array(z.unknown())
       .describe("Approved data dictionary rows (one object per column)"),
+    pendingApproval: z
+      .boolean()
+      .default(true)
+      .describe("Always true for agent calls. Saves the dictionary as pending so the user can approve via the UI."),
     deploymentContext: z
       .string()
       .optional()
@@ -44,12 +50,20 @@ export const saveDataDictionaryTool = createTool({
   outputSchema: z.object({
     success: z.boolean(),
     id: z.string().optional(),
+    kind: z.literal("data-dictionary").optional(),
+    approval_status: z.enum(["pending", "approved"]).optional(),
+    filename: z.string().optional(),
+    columnSignature: z.string().optional(),
+    dataDictionaryJson: z.array(z.unknown()).optional(),
+    deploymentContext: z.string().optional(),
     message: z.string(),
   }),
   execute: async (context) => {
     const supabase = getSupabase();
 
     try {
+      const approvalStatus = context.pendingApproval ? "pending" : "approved";
+
       // Check for an existing record with this column signature
       const { data: existing } = await supabase
         .from("datasets")
@@ -58,46 +72,48 @@ export const saveDataDictionaryTool = createTool({
         .limit(1)
         .maybeSingle();
 
+      const sharedPayload = {
+        filename: context.filename,
+        schema_json: context.schemaJson,
+        data_dictionary_json: context.dataDictionaryJson,
+        deployment_context: context.deploymentContext ?? null,
+        upload_session_id: context.sessionId,
+        approval_status: approvalStatus,
+      };
+
+      let id: string | undefined;
+
       if (existing) {
         const { data, error } = await supabase
           .from("datasets")
-          .update({
-            filename: context.filename,
-            schema_json: context.schemaJson,
-            data_dictionary_json: context.dataDictionaryJson,
-            deployment_context: context.deploymentContext ?? null,
-            upload_session_id: context.sessionId,
-          })
+          .update(sharedPayload)
           .eq("id", existing.id)
           .select("id")
           .single();
-
         if (error) throw error;
-        return {
-          success: true,
-          id: data?.id,
-          message: "Data dictionary updated. Will be loaded automatically in future sessions with this CSV schema.",
-        };
+        id = data?.id;
+      } else {
+        const { data, error } = await supabase
+          .from("datasets")
+          .insert({ ...sharedPayload, column_signature: context.columnSignature })
+          .select("id")
+          .single();
+        if (error) throw error;
+        id = data?.id;
       }
 
-      const { data, error } = await supabase
-        .from("datasets")
-        .insert({
-          filename: context.filename,
-          column_signature: context.columnSignature,
-          schema_json: context.schemaJson,
-          data_dictionary_json: context.dataDictionaryJson,
-          deployment_context: context.deploymentContext ?? null,
-          upload_session_id: context.sessionId,
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
       return {
         success: true,
-        id: data?.id,
-        message: "Data dictionary saved. Will be loaded automatically in future sessions with this CSV schema.",
+        id,
+        kind: "data-dictionary" as const,
+        approval_status: approvalStatus,
+        filename: context.filename,
+        columnSignature: context.columnSignature,
+        dataDictionaryJson: context.dataDictionaryJson,
+        deploymentContext: context.deploymentContext,
+        message: approvalStatus === "pending"
+          ? "Data dictionary submitted for approval. The user will see an inline approval card."
+          : "Data dictionary saved. Will be loaded automatically in future sessions with this CSV schema.",
       };
     } catch (err) {
       return {
