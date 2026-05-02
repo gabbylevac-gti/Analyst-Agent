@@ -43,6 +43,10 @@ export const readKnowledgeTool = createTool({
       .string()
       .optional()
       .describe("Exact template name lookup (e.g. 'ghost-classifier-v1')"),
+    orgId: z
+      .string()
+      .optional()
+      .describe("Organization ID — use the orgId returned by getSessionContext to prevent cross-org leakage"),
   }),
   outputSchema: z.object({
     beliefs: z.array(
@@ -69,7 +73,7 @@ export const readKnowledgeTool = createTool({
     ),
   }),
   execute: async (context) => {
-    const { type, tags, searchTerm, templateName } = context;
+    const { type, tags, searchTerm, templateName, orgId } = context;
     const supabase = getSupabase();
 
     let beliefs: any[] = [];
@@ -83,6 +87,7 @@ export const readKnowledgeTool = createTool({
         .order("confidence", { ascending: false })
         .limit(20);
 
+      if (orgId) query = query.eq("org_id", orgId);
       if (tags && tags.length > 0) {
         query = query.overlaps("tags", tags);
       }
@@ -102,6 +107,7 @@ export const readKnowledgeTool = createTool({
         .order("approved_at", { ascending: false })
         .limit(20);
 
+      if (orgId) query = query.eq("org_id", orgId);
       if (templateName) {
         query = query.eq("name", templateName);
       } else {

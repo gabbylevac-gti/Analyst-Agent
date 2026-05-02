@@ -43,7 +43,7 @@ export const setSessionNameTool = createTool({
     try {
       const { error } = await supabase
         .from("sessions")
-        .update({ name: context.name })
+        .update({ title: context.name })
         .eq("id", context.sessionId);
 
       if (error) throw error;

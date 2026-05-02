@@ -59,6 +59,9 @@ export const saveCodeTemplateTool = createTool({
     version: z
       .string()
       .describe("Version string (e.g. 'v1', 'v2')"),
+    orgId: z
+      .string()
+      .describe("Organization ID — use the orgId returned by getSessionContext"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -105,6 +108,7 @@ export const saveCodeTemplateTool = createTool({
           source_session_id: context.sourceSessionId ?? null,
           approved_at: new Date().toISOString(),
           approval_status: approvalStatus,
+          org_id: context.orgId,
         })
         .select("id")
         .single();

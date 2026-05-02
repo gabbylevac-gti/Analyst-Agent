@@ -19,6 +19,7 @@ import { writeBeliefTool } from "../tools/writeBelief";
 import { saveCodeTemplateTool } from "../tools/saveCodeTemplate";
 import { saveDataDictionaryTool } from "../tools/saveDataDictionary";
 import { setSessionNameTool } from "../tools/setSessionName";
+import { fetchSensorDataTool } from "../tools/fetchSensorData";
 import {
   INSTRUCTIONS,
   SKILL_DRAFT_DATA_DICTIONARY,
@@ -74,5 +75,6 @@ export const analystAgent = new Agent({
     saveCodeTemplate: saveCodeTemplateTool,
     saveDataDictionary: saveDataDictionaryTool,
     setSessionName: setSessionNameTool,
+    fetchSensorData: fetchSensorDataTool,
   },
 });

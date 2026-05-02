@@ -68,6 +68,7 @@ export const getSessionContextTool = createTool({
   }),
   outputSchema: z.object({
     staticKnowledge: z.string(),
+    orgId: z.string().optional(),
     beliefs: z.array(
       z.object({
         id: z.string(),
@@ -111,7 +112,16 @@ export const getSessionContextTool = createTool({
     // ── 1. Static domain knowledge ─────────────────────────────────────────
     const staticKnowledge = loadStaticKnowledge();
 
-    // ── 2. Approved beliefs ────────────────────────────────────────────────
+    // ── Fetch session record once — org_id scopes all subsequent reads/writes ─
+    const { data: sessionRecord } = await supabase
+      .from("sessions")
+      .select("csv_storage_path, csv_public_url, org_id")
+      .eq("id", sessionId)
+      .single();
+
+    const orgId: string | undefined = sessionRecord?.org_id ?? undefined;
+
+    // ── 2. Approved beliefs (scoped to org) ────────────────────────────────
     let beliefsQuery = supabase
       .from("knowledge_beliefs")
       .select("id, content, type, confidence, tags, created_at")
@@ -119,54 +129,57 @@ export const getSessionContextTool = createTool({
       .order("confidence", { ascending: false })
       .limit(50);
 
+    if (orgId) beliefsQuery = beliefsQuery.eq("org_id", orgId);
     if (beliefTags && beliefTags.length > 0) {
       beliefsQuery = beliefsQuery.overlaps("tags", beliefTags);
     }
 
     const { data: beliefs } = await beliefsQuery;
 
-    // ── 3. Code templates ──────────────────────────────────────────────────
-    const { data: codeTemplates } = await supabase
+    // ── 3. Code templates (scoped to org) ──────────────────────────────────
+    let templatesQuery = supabase
       .from("code_templates")
       .select("name, description, tags, version")
       .eq("approval_status", "approved")
       .order("approved_at", { ascending: false })
       .limit(20);
 
-    // ── 4. Session summaries (3 most recent, excluding current session) ────
-    const { data: sessionSummaries } = await supabase
+    if (orgId) templatesQuery = templatesQuery.eq("org_id", orgId);
+    const { data: codeTemplates } = await templatesQuery;
+
+    // ── 4. Session summaries (3 most recent, excluding current, scoped to org) ─
+    let summariesQuery = supabase
       .from("session_summaries")
       .select("session_id, summary_text, key_findings, created_at")
       .neq("session_id", sessionId)
       .order("created_at", { ascending: false })
       .limit(3);
 
+    if (orgId) summariesQuery = summariesQuery.eq("org_id", orgId);
+    const { data: sessionSummaries } = await summariesQuery;
+
     // ── 5. Data dictionary for current CSV schema ──────────────────────────
     let dataDictionary = undefined;
-    let csvUrl = undefined;
-
-    // Get CSV URL from current session record
-    const { data: sessionRecord } = await supabase
-      .from("sessions")
-      .select("csv_storage_path, csv_public_url")
-      .eq("id", sessionId)
-      .single();
+    let csvUrl: string | undefined = undefined;
 
     if (sessionRecord?.csv_public_url) {
       csvUrl = sessionRecord.csv_public_url;
     }
 
-    // Look for matching data dictionary by column signature
+    // Look for matching data dictionary by column signature, scoped to org
     if (csvColumnSignature) {
-      const { data: matchingDataset } = await supabase
+      let datasetQuery = supabase
         .from("datasets")
         .select("filename, schema_json, data_dictionary_json, deployment_context")
         .eq("column_signature", csvColumnSignature)
         .eq("approval_status", "approved")
         .not("data_dictionary_json", "is", null)
         .order("created_at", { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
+
+      if (orgId) datasetQuery = datasetQuery.eq("org_id", orgId);
+
+      const { data: matchingDataset } = await datasetQuery.single();
 
       if (matchingDataset) {
         dataDictionary = matchingDataset;
@@ -175,6 +188,7 @@ export const getSessionContextTool = createTool({
 
     return {
       staticKnowledge,
+      orgId,
       beliefs: beliefs ?? [],
       codeTemplates: codeTemplates ?? [],
       sessionSummaries: sessionSummaries ?? [],

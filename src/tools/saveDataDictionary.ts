@@ -46,6 +46,9 @@ export const saveDataDictionaryTool = createTool({
       .string()
       .optional()
       .describe("Physical location, coordinate system notes, known data quality issues"),
+    orgId: z
+      .string()
+      .describe("Organization ID — use the orgId returned by getSessionContext"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -79,6 +82,7 @@ export const saveDataDictionaryTool = createTool({
         deployment_context: context.deploymentContext ?? null,
         upload_session_id: context.sessionId,
         approval_status: approvalStatus,
+        org_id: context.orgId,
       };
 
       let id: string | undefined;

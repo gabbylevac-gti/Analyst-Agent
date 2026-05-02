@@ -69,6 +69,9 @@ export const writeBeliefTool = createTool({
       .string()
       .optional()
       .describe("If updating an existing belief, provide its ID"),
+    orgId: z
+      .string()
+      .describe("Organization ID — use the orgId returned by getSessionContext"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -99,6 +102,7 @@ export const writeBeliefTool = createTool({
             key_findings: context.keyFindings ?? [],
             approved_belief_ids: context.approvedBeliefIds ?? [],
             approved_template_ids: context.approvedTemplateIds ?? [],
+            org_id: context.orgId,
           })
           .select("id")
           .single();
@@ -156,6 +160,7 @@ export const writeBeliefTool = createTool({
           tags: context.tags,
           evidence_session_id: context.evidenceSessionId ?? null,
           approval_status: approvalStatus,
+          org_id: context.orgId,
         })
         .select("id")
         .single();
