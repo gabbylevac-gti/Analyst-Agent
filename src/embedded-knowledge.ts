@@ -153,7 +153,7 @@ Do not proceed to analysis without an approved dictionary. If the user skips app
 
 5. **Surface for approval** — present as a \`table\` artifact. Prompt: "Please review. Edit any inaccurate definitions, fill in deployment context, and confirm when ready. I won't begin analysis until you approve."
 
-6. **Persist on approval** — write the approved dictionary to the \`datasets\` table. Confirm: "Dictionary saved. Starting from this in future sessions."
+6. **Persist on approval** — call \`saveDataDictionary\` with \`sessionId\`, \`filename\`, \`columnSignature\` (comma-separated column names), \`schemaJson\` (the raw profile output), \`dataDictionaryJson\` (the approved rows), and \`deploymentContext\`. Confirm: "Dictionary saved. Starting from this in future sessions."
 
 ## Notes
 
@@ -187,8 +187,8 @@ Translate the user's natural language question into Python code, execute it in t
 - Use \`log_creation_time\` for time-based operations, never \`processed_at\`
 - Group by \`target_id\` for path-level metrics; never treat individual rows as paths
 - Round floats to 2 decimal places in tables; include row count and time window in every summary
-- Install extra libraries with \`subprocess.run(['pip', 'install', 'plotly', '--quiet'], check=True)\`
-- Preferred: \`pandas\`, \`numpy\`, \`plotly\`, \`scipy\`. Avoid matplotlib.`;
+- Preferred: \`pandas\`, \`numpy\`, \`plotly\`, \`scipy\`. These are pre-installed in the sandbox — do not pip install them.
+- If a library outside this set is needed, place the pip install as the **very first statement** in the script, before all imports and analysis code, and always include \`--root-user-action=ignore\` and \`capture_output=True\`: \`subprocess.run(['pip', 'install', 'somelib', '--quiet', '--root-user-action=ignore'], check=True, capture_output=True)\`. Never place a pip install after any analysis code — doing so disrupts stdout capture and produces an empty result.`;
 
 export const SKILL_INTERPRET_ARTIFACT = `# Skill: Interpret Artifact
 
@@ -329,4 +329,365 @@ Always use uuid-based element IDs to avoid collisions across multiple charts in 
 - Chart envelopes include both html and data
 - Chart HTML uses a unique uuid-based element ID
 - Table envelopes include both data (array) and columns (array)
-- summary is specific and includes numerical values`;
+- summary is specific and includes numerical values
+- If any subprocess pip install is present, it is the very first statement in the script (before all imports), includes \`--root-user-action=ignore\` and \`capture_output=True\`. A pip install anywhere else will produce empty stdout.`;
+
+// ─── Domain Knowledge ─────────────────────────────────────────────────────────
+// Embedded so the Mastra Platform deployment artifact is self-contained.
+// Source files: knowledge/domain/ and knowledge/beliefs/
+// Update both the source .md and the constant below when revising domain knowledge.
+
+export const DOMAIN_RADAR_SENSORS = `# Domain Knowledge: Radar Sensors
+
+## What Radar Sensors Are
+
+The radar sensors in this system are short-range FMCW (Frequency-Modulated Continuous Wave) radar devices mounted overhead in retail environments. They detect and track moving objects within their field of view, reporting each tracked entity as a \`target_id\` with position readings (x, y in meters) at approximately 1-second intervals.
+
+Unlike cameras, radar sensors:
+- Do not capture images — no privacy concerns
+- Work in darkness and are not affected by lighting conditions
+- Track reflective surfaces — bodies, clothing, carts, and sometimes shelving or metal fixtures
+- Have a detection range of approximately 3–8 meters depending on mounting height and model
+- Produce position readings relative to the sensor's own coordinate origin (not a global coordinate system)
+
+---
+
+## Coordinate System
+
+Each sensor defines its own local coordinate system with the sensor as the origin (0, 0):
+- **x-axis**: horizontal position in meters (negative = left of sensor, positive = right)
+- **y-axis**: depth from sensor in meters (0 = directly below; positive = away from sensor)
+- **z-axis**: not reported in the CSV; implicitly the mounting height above floor
+
+The physical meaning of the axes (which direction is "toward the entrance," which is "toward the product display") is deployment-specific and must be confirmed in the data dictionary for each session.
+
+**Common pattern**: In a retail aisle deployment, y=0 is near the sensor mounting point (ceiling), y increases toward the far end of the aisle. x=0 is the centerline; negative x and positive x are the two sides of the aisle.
+
+---
+
+## Data Format
+
+| Field | Description |
+|-------|-------------|
+| \`log_creation_time\` | Timestamp of the position reading. Use this for temporal analysis. |
+| \`processed_at\` | When the reading was processed by the data pipeline — slightly later than \`log_creation_time\`. Do not use for temporal analysis. |
+| \`target_id\` | UUID assigned to a tracked entity for the duration of its presence in the detection zone. Not persistent across separate appearances. |
+| \`sensor_id\` | Organizational identifier for the sensor (e.g., \`org_abc123\`) |
+| \`sensor_name\` | Human-readable sensor name (e.g., \`radar-001\`) |
+| \`mac_address\` | Hardware MAC address of the device |
+| \`x_m\` | X-position in meters |
+| \`y_m\` | Y-position in meters |
+| \`account_id\` | Client/organization identifier |
+| \`device_id\` | Device record ID |
+
+---
+
+## Detection Physics and Noise Characteristics
+
+**Ghost paths** arise from radar physics, not human behavior:
+- **Multipath reflections**: The radar signal bounces off a nearby shelf or wall and creates a phantom detection near the real target
+- **Static clutter**: Stationary objects (shelving, signage) can generate spurious detections if they have reflective surfaces — typically appear as very short paths with near-zero movement
+- **Entry/exit artifacts**: As a person enters or leaves the detection zone, partial readings at the fringe can create very short paths with few data points
+- **Sensor startup noise**: The first 30–60 seconds after sensor power-on may produce spurious detections as the radar calibrates
+
+**Known ghost signatures** (working hypotheses — see seed beliefs for confirmed thresholds):
+- Very short dwell time (< 3–5 seconds)
+- Very small positional variance (target never actually moves; std of x and y positions near zero)
+- Position coordinates near the edge of the detection zone (fringe detections)
+- Path appears isolated in time (no nearby paths at the same moment — may indicate reflection rather than person)
+- Unusually regular sampling intervals (genuine human movement has irregular step patterns; reflections may be perfectly periodic)
+
+---
+
+## Multi-Sensor Deployments
+
+Multiple sensors may appear in a single CSV file (different \`sensor_name\` / \`sensor_id\` values). Important:
+- Each sensor has its own coordinate system — x=1.5m on sensor A is not the same physical location as x=1.5m on sensor B
+- Sensor fields overlap in retail deployments; the same person may appear in both sensors simultaneously with different coordinates
+- Cross-sensor path matching (linking the same physical person across sensors) requires spatial and temporal alignment — it is a hard problem not addressed in the base templates
+
+When multiple sensors are present, analyze each separately unless the session objective specifically requires cross-sensor alignment.
+
+---
+
+## Sampling Rate and Gaps
+
+The sensor reports approximately 1 reading per second per target. However:
+- Readings are not guaranteed to be exactly 1 second apart
+- Gaps can occur if the target briefly exits the detection zone and re-enters (creates a new \`target_id\`)
+- High-density periods (many simultaneous targets) may see reduced sampling rate per target
+- The \`difftime\` between consecutive readings for a target should be checked; gaps > 5 seconds within a path suggest possible detection interruptions
+
+---
+
+## What the Sensor Does NOT Measure
+
+- Identity (who the person is)
+- Intent (what they're doing)
+- Direction of gaze
+- Whether a hand reached toward a product
+- Cart vs. person (both are tracked as targets; cannot distinguish without additional context)`;
+
+export const DOMAIN_PATH_CLASSIFICATION = `# Domain Knowledge: Path Classification
+
+## Overview
+
+A "path" is one continuous detection sequence for a single \`target_id\` — from when the radar first detects the entity to when it exits the detection zone. The goal of path classification is to label each path as one of three categories:
+
+| Category | Definition |
+|----------|-----------|
+| **Engaged** | A person who stopped, lingered, and likely interacted with the product or display |
+| **Passer-by** | A person who walked through the detection zone without stopping |
+| **Ghost** | A sensor artifact — not a real person |
+
+---
+
+## Working Definitions
+
+### Engaged
+
+A path is likely **engaged** when:
+- \`dwell_seconds\` is long relative to the detection zone size (the threshold is deployment-specific — typically > 15–30 seconds for a 3m deep zone)
+- Positional variance is moderate: the person moved around within a bounded area (they were browsing, not just standing still or walking through)
+- The position cluster is spatially consistent with where the product or interaction point is located
+- The path has many data points (dense sampling throughout, no long gaps)
+
+Engaged paths are the primary signal of commercial interest. They are what the client wants to maximize.
+
+### Passer-by
+
+A path is likely a **passer-by** when:
+- \`dwell_seconds\` is short-to-moderate (3–15 seconds for a typical zone)
+- The path shows directional movement: x or y changes consistently in one direction (they walked through)
+- Position starts at one edge of the detection zone and ends at the other
+- The path has moderate data point density
+
+Passer-bys are people who were present but not engaged. They represent potential audience who did not stop.
+
+### Ghost
+
+A path is likely a **ghost** when:
+- \`dwell_seconds\` is very short (< 3–5 seconds — threshold under development)
+- Positional variance is near-zero: the "person" never actually moves (std of x_m and y_m < 0.1–0.2m)
+- The position is at the fringe of the detection zone (near maximum y distance, or at the x extremes)
+- The path exists in isolation: no other paths are active at the same time nearby
+- The path's position matches known reflective surfaces (shelving, metal fixtures) in the store layout
+
+Ghosts inflate path counts and should be excluded from engagement metrics before analysis.
+
+---
+
+## The Classification Challenge
+
+The three categories are not cleanly separable with a single threshold. The current approach is hierarchical:
+
+**Step 1 — Ghost filter**: Remove paths that are clearly artifacts. Apply dwell and positional variance thresholds. This is the highest-priority filter.
+
+**Step 2 — Passer-by vs Engaged**: Among non-ghost paths, separate based on dwell time, spatial variance, and movement directionality. This boundary is more context-dependent and is where most of the algorithm development work lives.
+
+**Known ambiguities**:
+- A person who enters, hesitates briefly, and leaves may have ghost-like dwell but non-ghost movement
+- A cleaning staff member pushing a cart may dwell for a very long time in one spot (engaged-looking) but has no commercial intent
+- A person standing next to a long-dwelling engaged person may appear as a shorter-dwell path at the same location — looks like a passer-by but may have been engaged together
+
+---
+
+## Path-Level Feature Engineering
+
+Before classifying, the raw per-row sensor data must be aggregated to the path level. Key features:
+
+| Feature | How to Compute | Relevance |
+|---------|---------------|-----------|
+| \`dwell_seconds\` | \`max(log_creation_time) - min(log_creation_time)\` | Primary ghost filter; primary engagement signal |
+| \`point_count\` | Row count per \`target_id\` | Proxy for data quality; low count = unreliable path |
+| \`pos_std_x\` | \`std(x_m)\` per target | Low = stationary (ghost or standing still) |
+| \`pos_std_y\` | \`std(y_m)\` per target | Low = stationary |
+| \`pos_range_x\` | \`max(x_m) - min(x_m)\` | High = lateral movement (browsing vs pass-through) |
+| \`pos_range_y\` | \`max(y_m) - min(y_m)\` | High = walked through zone (passer-by signature) |
+| \`centroid_x\` | \`mean(x_m)\` | Spatial location of activity |
+| \`centroid_y\` | \`mean(y_m)\` | Spatial location of activity |
+| \`start_hour\` | Hour of \`min(log_creation_time)\` | Time-of-day signal for ghost likelihood |
+| \`is_fringe\` | Whether centroid is near detection zone edge | Ghost indicator |
+
+---
+
+## Algorithm Development Status
+
+The classification algorithm is a work in progress. See the seed beliefs for the current approved thresholds and the session history that produced them.
+
+The goal is a Python function with the following signature:
+
+\`\`\`python
+def classify_path(path_row: dict) -> str:
+    """
+    Returns 'ghost', 'passer-by', or 'engaged' for a single path-level row.
+    Input is a dict with path-level features (dwell_seconds, pos_std_x, pos_std_y, etc.)
+    """
+    ...
+\`\`\`
+
+This function, once approved, should be saved as a code template and referenced by name in all future sessions.
+
+---
+
+## Evaluation Framework
+
+When testing a classifier version, report:
+- **Precision**: Of paths labeled Ghost, what % are actually ghosts? (False positives = real paths mislabeled as ghosts)
+- **Recall**: Of actual ghosts, what % did the classifier catch? (False negatives = ghosts mislabeled as real)
+- **Ground truth method**: Since we have no labeled data, ground truth is currently established by visual inspection of path trajectories — the user manually reviews borderline cases and labels them
+
+As labeled examples accumulate across sessions, a more rigorous evaluation becomes possible.`;
+
+export const DOMAIN_RETAIL_CONTEXT = `# Domain Knowledge: Retail Context
+
+## Deployment Context
+
+The radar sensors in this system are deployed in retail environments — primarily grocery or specialty retail stores. Sensors are mounted in the ceiling above specific zones (product displays, endcaps, promotional areas) to measure foot traffic and engagement with those zones.
+
+---
+
+## Business Objectives
+
+The primary business questions this system is designed to answer:
+
+1. **Engagement rate**: What percentage of people who enter the detection zone stop and engage vs. pass through?
+2. **Dwell time distribution**: How long do engaged visitors spend in the zone?
+3. **Traffic volume**: How many unique paths (people) enter the zone per hour / day / week?
+4. **Ghost rate**: What percentage of detected paths are sensor artifacts, and can we reliably filter them?
+5. **Algorithm development**: Can we build a reliable classifier that auto-labels paths as engaged, passer-by, or ghost?
+
+Commercial impact: engagement metrics from these sensors inform decisions about product placement, promotional display design, staffing, and campaign effectiveness.
+
+---
+
+## Typical Store Layout Context
+
+Without a floor plan, the coordinate system must be inferred from data patterns. Common configurations:
+
+**Endcap deployment** (sensor above end of aisle):
+- y increases toward the main aisle (high-traffic corridor)
+- y ≈ 0 is directly below the sensor (near the back of the endcap)
+- x spans the width of the endcap (typically 1.2–2.4m)
+- Passer-bys appear as paths moving through at high y values; engaged paths cluster at lower y values near the product
+
+**In-aisle deployment** (sensor above a product section):
+- y increases along the aisle direction
+- x spans across the aisle width
+- People who linger near products show high dwell at specific (x, y) centroids
+
+When the deployment type is not known, inspect the path trajectory plot for structural patterns before proceeding with classification.
+
+---
+
+## Traffic Patterns to Expect
+
+**High-ghost periods**: Early morning before store opening, late night. Low human traffic means any detections are more likely artifacts.
+
+**Peak traffic**: Mid-morning (10–12), early afternoon (1–3pm), post-work (5–7pm). Expect high path density, possible sensor crowding.
+
+**Weekly patterns**: Weekends typically 20–40% higher traffic than weekdays in grocery. Promotions spike traffic on launch day.
+
+**Dwell expectations by category**:
+- Typical grocery shopper at an endcap: 3–20 seconds
+- Engaged shopper who picks up product: 15–45 seconds
+- Browser reading label: 30–90 seconds
+- Staff restocking: 60–300+ seconds (these should be filtered or flagged separately)
+
+---
+
+## Known Analysis Patterns
+
+**Session startup pattern**: First analysis in a session is almost always path aggregation (raw rows → path-level summary). This is always the right starting point.
+
+**Ghost filter before metrics**: Never compute engagement rates on raw path data. Always apply ghost filter first. Inflated path counts due to ghosts make engagement rate look artificially low.
+
+**Staff paths**: Long-dwell, high-movement paths during store opening/closing or known restocking windows are likely staff. Consider filtering by time window (store hours only) or flagging separately.
+
+**Sensor comparison**: When multiple sensors are present, compare ghost rates across sensors as a sensor health check — a sensor with a significantly higher ghost rate than others may have a calibration or placement issue.
+
+---
+
+## Coordinate System Confirmation Checklist
+
+At the start of any new deployment's data, confirm with the user:
+1. Where is y=0? (directly below sensor, or at one end of the zone?)
+2. Which direction does y increase? (toward entrance, or away?)
+3. What is the physical width represented by the x range in the data?
+4. Are negative x values meaningful, or are they fringe artifacts?
+5. Is there a known reflective surface at any specific (x, y) that would explain ghost clustering?
+
+Store this in the data dictionary for the session and write it to the dataset record in Supabase.`;
+
+export const SEED_BELIEFS = `# Approved Beliefs — Seed File
+
+This file contains beliefs that are pre-loaded into every deployment. They represent starting hypotheses based on domain knowledge, not yet confirmed by session analysis.
+
+As sessions run and evidence accumulates, beliefs are updated in Supabase. This file is the **seed state** — deployed with the code, not modified at runtime. Supabase is the live append target.
+
+To update this seed file, edit the source at knowledge/beliefs/approved-takeaways.md and update this constant.
+
+---
+
+## How to Read This File
+
+Each belief has:
+- **ID**: Unique reference used in session summaries and evidence chains
+- **Type**: Take-Away | Belief | False-Belief | Algorithm Version | Pending
+- **Confidence**: 0.0–1.0 (see instructions for scale)
+- **Content**: The claim
+- **Evidence**: What supports it (session IDs added at runtime; seed beliefs cite source literature or first principles)
+- **Tags**: For retrieval by \`readKnowledge\`
+
+---
+
+## Seed Beliefs
+
+---
+
+**ID**: \`belief_ghost_dwell_threshold_seed\`
+**Type**: Pending
+**Confidence**: 0.60
+**Content**: Ghost paths in retail radar deployments have dwell times shorter than genuine human paths. A dwell threshold of 3–5 seconds is a reasonable starting point for the ghost filter. The exact threshold is deployment-specific and should be refined with session data.
+**Evidence**: First principles (sensor physics) + domain literature on retail FMCW radar deployments.
+**Tags**: ghost-detection, path-classification, dwell-time
+
+---
+
+**ID**: \`belief_ghost_positional_variance_seed\`
+**Type**: Pending
+**Confidence**: 0.65
+**Content**: Ghost paths caused by multipath reflection or static clutter have near-zero positional variance — the "target" does not move. Genuine human paths show non-trivial movement even when stationary (micro-movements, weight shifts). A positional standard deviation threshold of 0.10–0.20m in both x and y is a reasonable ghost indicator.
+**Evidence**: Radar physics (reflection artifacts are stationary by definition). Confidence is moderate because sensor noise can simulate small movement.
+**Tags**: ghost-detection, path-classification, positional-variance
+
+---
+
+**ID**: \`belief_fringe_detection_seed\`
+**Type**: Pending
+**Confidence**: 0.55
+**Content**: Short paths that appear at the edge of the detection zone (high y values, near maximum range) are disproportionately likely to be fringe artifacts rather than genuine paths. The sensor's detection reliability decreases at range extremes.
+**Evidence**: First principles (radar SNR decreases with distance). Low confidence — needs empirical confirmation from session data.
+**Tags**: ghost-detection, sensor-behavior, fringe
+
+---
+
+**ID**: \`belief_path_aggregation_unit_seed\`
+**Type**: Belief
+**Confidence**: 0.95
+**Content**: The correct unit of analysis for engagement metrics is the path (grouped by target_id), not the individual position reading (row). Computing metrics on raw rows produces meaningless results. All analysis must begin with path aggregation.
+**Evidence**: Definitional — a "path" is a single entity's presence event. Row-level analysis conflates path length with engagement signal.
+**Tags**: data-model, path-aggregation, methodology
+
+---
+
+**ID**: \`belief_log_creation_time_seed\`
+**Type**: Belief
+**Confidence**: 0.95
+**Content**: \`log_creation_time\` is the correct timestamp field for temporal analysis. \`processed_at\` reflects pipeline processing delay and should not be used for time-window filtering or dwell calculation.
+**Evidence**: Data schema definition. \`processed_at\` is systematically later than \`log_creation_time\` by the pipeline processing latency.
+**Tags**: data-model, timestamps, methodology
+
+---
+
+*Runtime-approved beliefs are stored in Supabase \`knowledge_beliefs\` table and loaded via \`getSessionContext\`. They do not appear in this file.*`;

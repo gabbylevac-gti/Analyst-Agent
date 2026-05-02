@@ -66,6 +66,12 @@ export const executeCodeTool = createTool({
         await sandbox.files.write("/sandbox/upload.csv", csvBuffer);
       }
 
+      // ── Pre-install common libraries so user scripts don't need to ───────
+      await sandbox.runCode(
+        "import subprocess; subprocess.run(['pip', 'install', 'plotly', 'pandas', 'numpy', 'scipy', '--quiet', '--root-user-action=ignore'], check=True, capture_output=True)",
+        { language: "python" }
+      );
+
       // ── Execute the script ─────────────────────────────────────────────────
       const exec = await sandbox.runCode(code, { language: "python" });
 
