@@ -85,6 +85,7 @@ export const fetchSensorDataTool = createTool({
       .from("integrations")
       .select("api_key")
       .eq("org_id", endPoint.org_id)
+      .eq("vendor", "data-realities-radar")
       .single();
 
     if (integrationError || !integration) {
