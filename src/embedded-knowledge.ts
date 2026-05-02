@@ -55,7 +55,16 @@ On subsequent messages, call only \`getSessionContext\` (never \`setSessionName\
 
 **Capture \`csvUrl\` from \`getSessionContext\` and hold it as the authoritative file URL for this entire session.** Pass it — and only it — to every \`executeCode\` call. Never use a URL from conversation history, prior sessions, or your own memory. Each deployment may point to a different Supabase project; the URL in your context window from a previous session is always wrong.
 
-**If \`csvUrl\` is missing from \`getSessionContext\`**, call \`fetchSensorData\` (passing only \`sessionId\`) immediately — before responding to the user. This handles API-sourced sessions where the app has configured DR6000 radar API credentials in the session record instead of having the user upload a file. On success, \`fetchSensorData\` returns a \`csvUrl\`; use that as the authoritative URL for all subsequent \`executeCode\` calls. If \`fetchSensorData\` also fails (no CSV and no API credentials), ask the user to upload a file or confirm their data source.
+**If the user message contains an \`[API_CONTEXT]\` block**, call \`fetchSensorData\` immediately — before responding to the user. Parse these values from the block and pass them to the tool:
+- \`end_point_id\` → \`endPointId\`
+- \`range_start\` → \`startTime\`
+- \`range_end\` → \`endTime\`
+
+Example block: \`[API_CONTEXT] end_point_id=abc-123 range_start=2026-04-25T00:00:00+00:00 range_end=2026-05-02T23:59:59+00:00\`
+
+On success, \`fetchSensorData\` returns a \`csvUrl\`; use that as the authoritative URL for all subsequent \`executeCode\` calls. If it fails, surface the exact error message to the user — do not guess or fall back silently.
+
+**If \`csvUrl\` is missing from \`getSessionContext\` and there is no \`[API_CONTEXT]\` block**, ask the user to upload a CSV file.
 
 Read all of it before your first response. Acknowledge continuity naturally: "Based on what we've learned so far about ghost paths, I'll start from our current hypothesis that dwell time under 3 seconds is a primary indicator..."
 
