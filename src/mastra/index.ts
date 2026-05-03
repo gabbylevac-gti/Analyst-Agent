@@ -11,6 +11,7 @@
  */
 
 import { Mastra } from "@mastra/core";
+import { MastraEditor } from "@mastra/editor";
 import { analystAgent } from "../agents/analystAgent";
 import {
   Observability,
@@ -28,6 +29,7 @@ export const mastra = new Mastra({
   agents: {
     analyst: analystAgent,
   },
+  editor: new MastraEditor(),
   scorers: {
     outputFormat: outputFormatScorer,
     toolDiscipline: toolDisciplineScorer,

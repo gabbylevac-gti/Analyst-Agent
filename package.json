@@ -11,6 +11,7 @@
     "@ai-sdk/anthropic": "3.0.74",
     "@e2b/code-interpreter": "2.4.2",
     "@mastra/core": "1.31.0",
+    "@mastra/editor": "^0.7.22",
     "@mastra/observability": "1.11.0",
     "@supabase/supabase-js": "2.105.1"
   },
