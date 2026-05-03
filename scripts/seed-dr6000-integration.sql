@@ -12,9 +12,8 @@
 --
 -- Idempotent: uses EXISTS checks so re-running is safe.
 --
--- Future automation: wrap this in a Supabase Edge Function triggered by
--- POST /functions/v1/seed-integration { org_id, vendor } after integration
--- creation in the UI.
+-- Automated trigger: the app calls supabase.rpc('seed_integration', { p_org_id, p_vendor })
+-- after creating an integration. See scripts/create-seed-integration-rpc.sql.
 -- =============================================================================
 
 DO $$
@@ -29,12 +28,13 @@ BEGIN
 -- DR6000 Paths Report ─────────────────────────────────────────────────────────
 -- Use for: spatial movement, trajectories, heatmaps, ghost path detection
 INSERT INTO datasets (
-  org_id, filename, column_signature,
+  org_id, vendor, filename, column_signature,
   schema_json, data_dictionary_json,
   deployment_context, approval_status, upload_session_id
 )
 SELECT
   v_org_id,
+  'data-realities-radar',
   'dr6000_paths_report.csv',
   'processed_at,account_id,device_id,log_creation_time,timezone_offset,timezone_label,sensor_id,sensor_name,mac_address,target_id,x_m,y_m',
   '{"source": "DR6000 API v2.0", "report_type": "paths", "row_unit": "one row per ~1-second position reading per target"}'::jsonb,
@@ -64,12 +64,13 @@ WHERE NOT EXISTS (
 -- DR6000 Sessions Report ──────────────────────────────────────────────────────
 -- Use for: traffic volume, dwell time, engagement rates, zone analysis, proximity
 INSERT INTO datasets (
-  org_id, filename, column_signature,
+  org_id, vendor, filename, column_signature,
   schema_json, data_dictionary_json,
   deployment_context, approval_status, upload_session_id
 )
 SELECT
   v_org_id,
+  'data-realities-radar',
   'dr6000_sessions_report.csv',
   'processed_at,account_id,device_id,log_creation_time,timezone_offset,timezone_label,sensor_id,sensor_name,mac_address,target_id,dwell_tracking_area_sec,zone_dwell_times_json,proximity_m',
   '{"source": "DR6000 API v2.0", "report_type": "sessions", "row_unit": "one row per person-visit (target entering and leaving sensor field of view)"}'::jsonb,
@@ -148,11 +149,12 @@ WHERE NOT EXISTS (
 -- =============================================================================
 
 INSERT INTO code_templates (
-  org_id, name, description, code, tags, parameters, version,
+  org_id, vendor, name, description, code, tags, parameters, version,
   approval_status, approved_at, source_session_id
 )
 SELECT
   v_org_id,
+  'data-realities-radar',
   'dr6000-ghost-filter-v1',
   'Classify DR6000 paths report paths as ghost or real using dwell time and positional variance thresholds. Returns a table with ghost_reason (real / low_dwell / stationary / low_dwell+stationary) and summary stats.',
   $template_code$import pandas as pd
