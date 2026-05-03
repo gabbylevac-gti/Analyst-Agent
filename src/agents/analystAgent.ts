@@ -12,6 +12,7 @@
 import { Agent } from "@mastra/core/agent";
 import type { CoreSystemMessage } from "@mastra/core/llm";
 import { anthropic } from "@ai-sdk/anthropic";
+import { z } from "zod";
 import { executeCodeTool } from "../tools/executeCode";
 import { getSessionContextTool } from "../tools/getSessionContext";
 import { readKnowledgeTool } from "../tools/readKnowledge";
@@ -67,6 +68,11 @@ export const analystAgent = new Agent({
   name: "analyst",
   instructions,
   model: anthropic("claude-sonnet-4-6"),
+  requestContextSchema: z.object({
+    sessionId: z.string().describe("Current session ID"),
+    orgId: z.string().describe("Organization ID"),
+    userId: z.string().describe("Authenticated user ID"),
+  }),
   tools: {
     executeCode: executeCodeTool,
     getSessionContext: getSessionContextTool,
