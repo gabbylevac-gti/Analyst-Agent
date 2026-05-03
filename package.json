@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "mastra dev",
+    "dev": "rm -rf .mastra/output && mastra dev",
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
