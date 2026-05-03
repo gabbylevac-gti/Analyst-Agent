@@ -18,10 +18,20 @@ import {
   CloudExporter,
   SensitiveDataFilter,
 } from "@mastra/observability";
+import {
+  outputFormatScorer,
+  toolDisciplineScorer,
+  beliefGateScorer,
+} from "./scorers";
 
 export const mastra = new Mastra({
   agents: {
     analyst: analystAgent,
+  },
+  scorers: {
+    outputFormat: outputFormatScorer,
+    toolDiscipline: toolDisciplineScorer,
+    beliefGate: beliefGateScorer,
   },
   observability: new Observability({
     configs: {

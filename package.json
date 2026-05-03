@@ -4,17 +4,19 @@
   "type": "module",
   "scripts": {
     "dev": "mastra dev",
-    "build": "tsc"
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "latest",
-    "@e2b/code-interpreter": "latest",
-    "@mastra/core": "latest",
-    "@mastra/observability": "^1.11.0",
-    "@supabase/supabase-js": "latest"
+    "@ai-sdk/anthropic": "3.0.74",
+    "@e2b/code-interpreter": "2.4.2",
+    "@mastra/core": "1.31.0",
+    "@mastra/observability": "1.11.0",
+    "@supabase/supabase-js": "2.105.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0"
+    "mastra": "1.7.3",
+    "typescript": "^5.9.3"
   }
 }
