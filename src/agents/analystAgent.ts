@@ -69,9 +69,9 @@ export const analystAgent = new Agent({
   instructions,
   model: anthropic("claude-sonnet-4-6"),
   requestContextSchema: z.object({
-    sessionId: z.string().describe("Current session ID"),
-    orgId: z.string().describe("Organization ID"),
-    userId: z.string().describe("Authenticated user ID"),
+    sessionId: z.string().optional().describe("Current session ID"),
+    orgId: z.string().optional().describe("Organization ID"),
+    userId: z.string().optional().describe("Authenticated user ID"),
   }),
   tools: {
     executeCode: executeCodeTool,
