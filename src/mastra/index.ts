@@ -11,6 +11,7 @@
  */
 
 import { Mastra } from "@mastra/core";
+import { InMemoryStore } from "@mastra/core/storage";
 import { MastraEditor } from "@mastra/editor";
 import { analystAgent } from "../agents/analystAgent";
 import {
@@ -26,6 +27,7 @@ import {
 } from "./scorers";
 
 export const mastra = new Mastra({
+  storage: new InMemoryStore(),
   agents: {
     analyst: analystAgent,
   },
