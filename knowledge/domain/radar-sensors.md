@@ -1,5 +1,17 @@
 # Domain Knowledge: Radar Sensors
 
+## Knowledge Status
+
+| | |
+|---|---|
+| **Overall Confidence** | 0.85 |
+| **Last Reviewed** | 2026-05-08 |
+| **Pending Validation** | Ghost threshold values (dwell < 3–5s, std < 0.1–0.2m) — require per-deployment trajectory inspection |
+
+See the Evidence Log at the end of this file for per-claim detail.
+
+---
+
 ## What Radar Sensors Are
 
 The radar sensors in this system are short-range FMCW (Frequency-Modulated Continuous Wave) radar devices mounted overhead in retail environments. They detect and track moving objects within their field of view, reporting each tracked entity as a `target_id` with position readings (x, y in meters) at approximately 1-second intervals.
@@ -22,7 +34,9 @@ Each sensor defines its own local coordinate system with the sensor as the origi
 
 The physical meaning of the axes (which direction is "toward the entrance," which is "toward the product display") is deployment-specific and must be confirmed in the data dictionary for each session.
 
-**Common pattern**: In a retail aisle deployment, y=0 is near the sensor mounting point (ceiling), y increases toward the far end of the aisle. x=0 is the centerline; negative x and positive x are the two sides of the aisle.
+**Common pattern**: In a retail aisle deployment, y=0 is near the sensor mounting point (ceiling), y increases toward the far end of the aisle. x=0 is the centerline (directly in front of the sensor); negative x is left of the sensor and positive x is right — both are normal, expected values.
+
+**Coordinate guarantee**: The DR6000 sensor validates positional bounds before output. Null x_m or y_m values are unexpected and indicate a data pipeline issue, not a normal sensor condition. x=0 is a valid coordinate (shopper directly in front of the sensor) and must never be treated as missing.
 
 ---
 
@@ -88,3 +102,18 @@ The sensor reports approximately 1 reading per second per target. However:
 - Direction of gaze
 - Whether a hand reached toward a product
 - Cart vs. person (both are tracked as targets; cannot distinguish without additional context)
+
+---
+
+## Evidence Log
+
+| Claim | Confidence | Source | Date Added | Status |
+|-------|-----------|--------|------------|--------|
+| FMCW radar, ~1 Hz sampling, overhead mounting | 0.95 | DR6000 product specification + observed data | 2026-05-08 | Confirmed |
+| x=0 is directly in front of sensor; negative x is left (valid) | 0.95 | SME confirmation 2026-05-08 | 2026-05-08 | Confirmed |
+| y=0 is directly below sensor; y increases away from sensor | 0.90 | Data Catalog + observed trajectory patterns | 2026-05-08 | Confirmed — verify orientation per deployment |
+| Sensor guarantees coordinate values (null is pipeline error, not sensor behavior) | 0.90 | SME confirmation 2026-05-08 | 2026-05-08 | Confirmed |
+| Ghost signatures: short dwell + near-zero positional variance | 0.65 | Radar physics + initial session observations | 2026-05-08 | Pending: per-deployment threshold validation required |
+| Fringe detections (high y, x extremes) as ghost indicator | 0.70 | Sensor physics — entry/exit artifact behavior | 2026-05-08 | Hypothesis — use as supporting signal |
+| Multi-sensor: same person gets separate target_id per sensor | 0.85 | Architectural — each sensor has independent tracking | 2026-05-08 | Confirmed; cross-sensor deduplication not yet solved |
+| Detection range 3–8m depending on mounting height | 0.75 | DR6000 sensor spec range; actual range is deployment-specific | 2026-05-08 | Verify per deployment |

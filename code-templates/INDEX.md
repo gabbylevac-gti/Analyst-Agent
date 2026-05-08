@@ -20,12 +20,25 @@ The agent uses these templates instead of writing code from scratch. When a user
 
 ## Template Registry
 
+Templates follow a two-stage pipeline: `transformation` templates process Raw → Clean (writes to `dataset_records`); `analysis` templates read from `dataset_records` and produce output envelopes. See `knowledge/data-catalog/dr6000-sensor.md` for the full pipeline architecture.
+
+### Stage 1 — Transformation (Raw → Clean)
+
+| Template | File | Purpose | Output Type | Status |
+|----------|------|---------|-------------|--------|
+| Quality Check — Sensor | `quality-check-sensor-v1.py` | Diagnostic before transformation: what each QR rule would filter, ghost rate at candidate thresholds, recommendations. Does not write to Postgres. | `multi` (table + text) | Seed |
+| DR6000 Transform | `dr6000-transform-v1.py` | Applies QR-1 (off-hours) and QR-2 (min point count), aggregates to path level. Returns clean paths for Mastra tool to write to `dataset_records`. Ghost filter (QR-3) deferred to analysis time. | `multi` (table + text) | Seed |
+
+### Stage 2 — Analysis (Clean → Enriched)
+
 | Template | File | Purpose | Output Type | Status |
 |----------|------|---------|-------------|--------|
 | Path Aggregation | `path-aggregation.py` | Convert raw sensor rows → one row per target_id with dwell, position stats | `table` | Seed |
 | Path Trajectory Plot | `path-trajectory-plot.py` | X/Y scatter with connected lines per target_id | `chart` | Seed |
 | Position Over Time | `position-over-time.py` | X or Y coordinate vs. time, colored by target_id | `chart` | Seed |
 | Summary Statistics | `summary-statistics.py` | Sensor-level and path-level descriptive stats | `multi` (table + text) | Seed |
+| Path Classification | `path-classification-v1.py` | Full 3-way classification: ghost / passer-by / engaged. Applies deployment-specific ghost thresholds from data dictionary. Includes is_fringe flag. | `multi` (chart + table) | Seed |
+| Engagement Metrics | `engagement-metrics-v1.py` | Core business metrics: daily traffic, engagement rate, dwell distribution by day. Applies deployment-specific ghost thresholds from data dictionary. | `multi` (chart + chart + text) | Seed |
 
 **Status definitions**:
 - **Seed**: Included in the repository at deployment time. Not yet confirmed on live data.

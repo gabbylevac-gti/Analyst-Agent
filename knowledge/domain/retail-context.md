@@ -1,5 +1,17 @@
 # Domain Knowledge: Retail Context
 
+## Knowledge Status
+
+| | |
+|---|---|
+| **Overall Confidence** | 0.70 |
+| **Last Reviewed** | 2026-05-08 |
+| **Pending Validation** | Dwell expectations by shopper category, weekly traffic lift % — general retail benchmarks not yet validated against actual DR6000 deployment data |
+
+See the Evidence Log at the end of this file for per-claim detail.
+
+---
+
 ## Deployment Context
 
 The radar sensors in this system are deployed in retail environments — primarily grocery or specialty retail stores. Sensors are mounted in the ceiling above specific zones (product displays, endcaps, promotional areas) to measure foot traffic and engagement with those zones.
@@ -70,10 +82,25 @@ When the deployment type is not known, inspect the path trajectory plot for stru
 ## Coordinate System Confirmation Checklist
 
 At the start of any new deployment's data, confirm with the user:
-1. Where is y=0? (directly below sensor, or at one end of the zone?)
-2. Which direction does y increase? (toward entrance, or away?)
-3. What is the physical width represented by the x range in the data?
-4. Are negative x values meaningful, or are they fringe artifacts?
-5. Is there a known reflective surface at any specific (x, y) that would explain ghost clustering?
+1. Where is the sensor mounted relative to the product display or interaction point?
+2. Which direction does y increase? (toward the main aisle/entrance, or away?)
+3. What physical width does the full x range represent? (helps interpret engagement clusters)
+4. Is there a known reflective surface at any specific (x, y) that would explain ghost clustering? (metal shelving, signage, fixtures)
 
-Store this in the data dictionary for the session and write it to the dataset record in Supabase.
+Note: x=0 is always the centerline (directly in front of the sensor). Negative x is always the left side of the sensor's view, positive x is always the right side — both are valid, expected values. The sensor validates coordinate bounds before output.
+
+Store confirmed answers in the org's Data Dictionary under `coordinate_system_notes`.
+
+---
+
+## Evidence Log
+
+| Claim | Confidence | Source | Date Added | Status |
+|-------|-----------|--------|------------|--------|
+| Ghost filter before metrics is required (never compute engagement on raw paths) | 0.95 | Logical requirement — ghost paths inflate counts and suppress engagement rate | 2026-05-08 | Confirmed |
+| x=0 is directly in front of sensor; negative x is left (valid, expected) | 0.95 | SME confirmation 2026-05-08 | 2026-05-08 | Confirmed |
+| Peak traffic: mid-morning 10–12, early afternoon 1–3pm, post-work 5–7pm | 0.75 | General retail industry knowledge | 2026-05-08 | Hypothesis — validate against actual hourly data per deployment |
+| Weekends 20–40% higher traffic than weekdays | 0.60 | General grocery retail benchmark | 2026-05-08 | Pending: validate against actual deployment data |
+| Dwell: typical grocery endcap shopper 3–20s; engaged 15–45s; browser 30–90s | 0.65 | Retail sensor literature; not validated on DR6000 data | 2026-05-08 | Pending: validate against dwell distribution from actual deployment |
+| Staff paths: dwell > 300s during open/close hours likely staff | 0.80 | Operational knowledge — restocking behavior | 2026-05-08 | Rule of thumb; verify timing per deployment |
+| Sensor ghost rate comparison across sensors flags calibration issues | 0.80 | Sensor health diagnostic logic | 2026-05-08 | Confirmed as diagnostic heuristic |

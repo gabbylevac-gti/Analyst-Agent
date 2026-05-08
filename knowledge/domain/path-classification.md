@@ -1,5 +1,17 @@
 # Domain Knowledge: Path Classification
 
+## Knowledge Status
+
+| | |
+|---|---|
+| **Overall Confidence** | 0.75 |
+| **Last Reviewed** | 2026-05-08 |
+| **Pending Validation** | Ghost dwell threshold (QR-3 GHOST_DWELL_S), ghost std threshold (QR-3 GHOST_STD_M), engaged dwell threshold (ENGAGED_DWELL_S) — all require per-deployment trajectory inspection before use |
+
+See the Evidence Log at the end of this file for per-claim detail.
+
+---
+
 ## Overview
 
 A "path" is one continuous detection sequence for a single `target_id` — from when the radar first detects the entity to when it exits the detection zone. The goal of path classification is to label each path as one of three categories:
@@ -108,3 +120,16 @@ When testing a classifier version, report:
 - **Ground truth method**: Since we have no labeled data, ground truth is currently established by visual inspection of path trajectories — the user manually reviews borderline cases and labels them
 
 As labeled examples accumulate across sessions, a more rigorous evaluation becomes possible.
+
+---
+
+## Evidence Log
+
+| Claim | Confidence | Source | Date Added | Status |
+|-------|-----------|--------|------------|--------|
+| Hierarchical classification: ghost filter first, then passer-by vs engaged | 0.90 | Algorithm design decision; consistent with sensor physics | 2026-05-08 | Confirmed |
+| Ghost signature: dwell < 3–5s AND pos_std < 0.1–0.2m | 0.65 | Initial observation across early sessions | 2026-05-08 | Pending: trajectory inspection per deployment required before committing thresholds |
+| Engaged threshold: typically > 15–30s for a 3m deep zone | 0.60 | Rule of thumb from retail sensor literature; not validated on DR6000 data | 2026-05-08 | Pending: validate per deployment via dwell histogram + user confirmation |
+| is_fringe (centroid near zone edge) as ghost indicator | 0.70 | Sensor physics — entry/exit artifacts appear at detection boundaries | 2026-05-08 | Hypothesis — incorporate as a supporting signal, not a standalone filter |
+| Feature engineering table (dwell, std, range, centroid, start_hour) | 0.90 | Standard path-level aggregation; consistent across sessions | 2026-05-08 | Confirmed |
+| Ground truth via visual trajectory inspection | 0.85 | No labeled dataset exists; trajectory plots are the current best method | 2026-05-08 | Confirmed as current approach; improves as labeled examples accumulate |
