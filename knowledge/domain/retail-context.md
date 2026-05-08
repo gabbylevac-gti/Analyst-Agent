@@ -43,9 +43,10 @@ Without a floor plan, the coordinate system must be inferred from data patterns.
 - Passer-bys appear as paths moving through at high y values; engaged paths cluster at lower y values near the product
 
 **In-aisle deployment** (sensor above a product section):
-- y increases along the aisle direction
-- x spans across the aisle width
-- People who linger near products show high dwell at specific (x, y) centroids
+- y increases toward the opposite shelving; tracking area typically bounded to stop before reaching the far side
+- y ≈ 0 is directly in front of the sensor (near the product shelf)
+- x spans up and down the aisle direction
+- People who linger near products show high dwell at low y values, clustered near the sensor-facing shelf
 
 When the deployment type is not known, inspect the path trajectory plot for structural patterns before proceeding with classification.
 

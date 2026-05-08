@@ -14,14 +14,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
-import {
-  OUTPUT_CONTRACT,
-  DOMAIN_RADAR_SENSORS,
-  DOMAIN_PATH_CLASSIFICATION,
-  DOMAIN_RETAIL_CONTEXT,
-  SEED_BELIEFS,
-  DOMAIN_DR6000_SCHEMA,
-} from "../embedded-knowledge";
+// Domain knowledge constants moved to analystAgent.ts system prompt.
 
 // ─── Supabase client ───────────────────────────────────────────────────────────
 
@@ -32,22 +25,9 @@ function getSupabase() {
   );
 }
 
-// ─── Static knowledge loader ───────────────────────────────────────────────────
-// Uses embedded constants instead of filesystem reads so this works on
-// Mastra Platform where source .md files are not included in the deployment.
-
-function loadStaticKnowledge(): string {
-  return [
-    ["output-contract.md", OUTPUT_CONTRACT],
-    ["radar-sensors.md", DOMAIN_RADAR_SENSORS],
-    ["path-classification.md", DOMAIN_PATH_CLASSIFICATION],
-    ["retail-context.md", DOMAIN_RETAIL_CONTEXT],
-    ["approved-takeaways.md", SEED_BELIEFS],
-    ["dr6000-schema.md", DOMAIN_DR6000_SCHEMA],
-  ]
-    .map(([name, content]) => `### ${name}\n\n${content}`)
-    .join("\n\n---\n\n");
-}
+// Static knowledge (domain files, output contract, seed beliefs) is now embedded
+// in the agent system prompt via analystAgent.ts. Returning it here too would
+// duplicate ~5k tokens into every conversation turn. Return a short confirmation.
 
 // ─── Tool definition ───────────────────────────────────────────────────────────
 
@@ -106,22 +86,47 @@ export const getSessionContextTool = createTool({
       })
       .optional(),
     csvUrl: z.string().optional(),
+    endPointId: z.string().optional(),
+    rangeStart: z.string().optional(),
+    rangeEnd: z.string().optional(),
   }),
-  execute: async (context) => {
+  execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
     const supabase = getSupabase();
 
-    // ── 1. Static domain knowledge ─────────────────────────────────────────
-    const staticKnowledge = loadStaticKnowledge();
+    // ── 1. Static domain knowledge — in system prompt, not tool results ───────
+    const staticKnowledge = "Domain knowledge available in system prompt (radar-sensors, path-classification, retail-context, dr6000-schema, seed-beliefs, output-contract).";
+
+    // The agent may pass "current" as a placeholder when it doesn't yet have
+    // the real session UUID. Fall back to the sessionId from the verified
+    // request context (set by the edge function or Studio Variables panel).
+    const runtimeSessionId = toolContext?.requestContext?.get?.("sessionId") as string | undefined;
+    const resolvedSessionId = sessionId === "current" ? (runtimeSessionId ?? sessionId) : sessionId;
 
     // ── Fetch session record once — org_id scopes all subsequent reads/writes ─
     const { data: sessionRecord } = await supabase
       .from("sessions")
-      .select("csv_storage_path, csv_public_url, org_id")
-      .eq("id", sessionId)
+      .select("csv_storage_path, csv_public_url, org_id, end_point_id, range_start, range_end")
+      .eq("id", resolvedSessionId)
       .single();
 
-    const orgId: string | undefined = sessionRecord?.org_id ?? undefined;
+    // Fall back to the org_id from the verified request context when session
+    // lookup fails (e.g., agent passes "current" before it has a real UUID).
+    const runtimeOrgId = toolContext?.requestContext?.get?.("orgId") as string | undefined;
+    const orgId: string | undefined = sessionRecord?.org_id ?? runtimeOrgId;
+
+    // Safety: never return unfiltered cross-org data if org can't be resolved.
+    if (!orgId) {
+      return {
+        staticKnowledge,
+        orgId: undefined,
+        beliefs: [],
+        codeTemplates: [],
+        sessionSummaries: [],
+        dataDictionary: undefined,
+        csvUrl: undefined,
+      };
+    }
 
     // ── 2. Approved beliefs (scoped to org) ────────────────────────────────
     let beliefsQuery = supabase
@@ -196,6 +201,9 @@ export const getSessionContextTool = createTool({
       sessionSummaries: sessionSummaries ?? [],
       dataDictionary,
       csvUrl,
+      endPointId: sessionRecord?.end_point_id ?? undefined,
+      rangeStart: sessionRecord?.range_start ?? undefined,
+      rangeEnd: sessionRecord?.range_end ?? undefined,
     };
   },
 });

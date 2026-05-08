@@ -12,6 +12,48 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { Sandbox } from "@e2b/code-interpreter";
 
+// ─── Trace data truncation ─────────────────────────────────────────────────────
+// Chart trace arrays (x, y, text, …) can contain thousands of raw data points.
+// The agent only needs these for interpretation, not for rendering — the frontend
+// renders from the html field. Truncate to MAX_TRACE_POINTS to prevent large
+// executeCode results from exhausting the token budget.
+
+const MAX_TRACE_POINTS = 80;
+const TRACE_ARRAY_KEYS = new Set(["x", "y", "z", "text", "customdata", "ids", "values", "labels"]);
+const TABLE_MAX_ROWS = 20;
+
+function truncateTrace(trace: unknown): unknown {
+  if (!trace || typeof trace !== "object" || Array.isArray(trace)) return trace;
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(trace as Record<string, unknown>)) {
+    if (TRACE_ARRAY_KEYS.has(k) && Array.isArray(v) && v.length > MAX_TRACE_POINTS) {
+      result[k] = v.slice(0, MAX_TRACE_POINTS);
+    } else {
+      result[k] = v;
+    }
+  }
+  return result;
+}
+
+function truncateEnvelopeData(envelope: z.infer<typeof artifactSchema>): z.infer<typeof artifactSchema> {
+  if (envelope.type === "chart") {
+    const fig = envelope.data as { data?: unknown[]; layout?: unknown } | undefined;
+    if (fig?.data) {
+      return { ...envelope, data: { ...fig, data: fig.data.map(truncateTrace) } };
+    }
+  }
+  if (envelope.type === "table" && Array.isArray(envelope.data) && envelope.data.length > TABLE_MAX_ROWS) {
+    return { ...envelope, data: (envelope.data as unknown[]).slice(0, TABLE_MAX_ROWS) };
+  }
+  if (envelope.type === "multi" && Array.isArray(envelope.artifacts)) {
+    return {
+      ...envelope,
+      artifacts: envelope.artifacts.map(a => truncateEnvelopeData(a as z.infer<typeof artifactSchema>)),
+    };
+  }
+  return envelope;
+}
+
 // ─── Output envelope schema ────────────────────────────────────────────────────
 
 const artifactSchema = z.object({
@@ -59,9 +101,17 @@ export const executeCodeTool = createTool({
     try {
       // ── Upload CSV if provided ─────────────────────────────────────────────
       if (csvUrl) {
-        const response = await fetch(csvUrl);
+        let response: Response;
+        try {
+          response = await fetch(csvUrl);
+        } catch (fetchErr) {
+          throw new Error(
+            `Could not fetch CSV from ${csvUrl}: ${(fetchErr as Error).message}. ` +
+            `Check that the URL is correct and the file is publicly accessible.`
+          );
+        }
         if (!response.ok) {
-          throw new Error(`Failed to fetch CSV from ${csvUrl}: ${response.statusText}`);
+          throw new Error(`Failed to fetch CSV from ${csvUrl}: HTTP ${response.status} ${response.statusText}`);
         }
         const csvBuffer = await response.arrayBuffer();
         await sandbox.files.write("/sandbox/upload.csv", csvBuffer);
@@ -112,7 +162,7 @@ export const executeCodeTool = createTool({
         }
       }
 
-      return { envelope, stdout, stderr, exitCode };
+      return { envelope: truncateEnvelopeData(envelope), stdout, stderr, exitCode };
     } catch (err) {
       return {
         envelope: {

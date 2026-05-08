@@ -128,6 +128,58 @@ The agent reads this and debugs before surfacing to the user.
 
 ---
 
+---
+
+## Artifact as Take-Away Draft
+
+In the `/chat` and `/notebook` playbooks, every artifact that answers an analysis question is simultaneously the **Take-Away draft**. There is no separate card. The artifact envelope + the agent's Tell/Show/Tell response together form the approvable unit.
+
+**What this means for the Python code:**
+
+The `summary` field is the agent's primary interpretation input — it becomes the "SHOW" layer (1–2 sentence chart interpretation). Write it as if it will be read aloud to someone who cannot see the chart.
+
+**Optional `insights` field (chart and multi envelopes only):**
+
+Analysis code may include a pre-computed `insights` array to assist the agent in drafting the "TELL" supporting layer (2–5 insights). If present, the agent uses it as a starting point; if absent, the agent derives insights from `data`.
+
+```json
+{
+  "type": "chart",
+  "title": "...",
+  "html": "...",
+  "data": {...},
+  "summary": "...",
+  "insights": [
+    "76% of paths (1,523 of 2,003) have dwell < 5s — likely ghost or passer-by dominated.",
+    "Median dwell for non-ghost paths is 18.4s, consistent with active engagement.",
+    "Ghost rate is highest between 06:00–08:00 (87%) and 21:00–22:00 (79%)."
+  ]
+}
+```
+
+- Each insight is a 1-sentence claim with a supporting number.
+- 2–5 insights maximum.
+- Insights must reference values from `data` — no fabrication.
+- If an insight would require the agent to re-run analysis, omit it and let the agent derive it.
+
+**Take-Away approval card lifecycle:**
+
+```
+Agent response turn
+  ├── TELL: 1-sentence direct answer
+  ├── SHOW: artifact rendered (html) + summary interpreted as 1-2 sentence interpretation
+  ├── TELL: 2-5 insights (from insights[] or derived from data)
+  ├── Take-Away draft card (pending):
+  │     headline = chart title
+  │     evidence = summary + key insight values
+  │     [Approve as Take-Away] [Edit] [Discard]
+  └── CTA: 1-2 next questions
+```
+
+Approved Take-Aways are written to the `knowledge_beliefs` table via `writeBelief`. The artifact HTML is NOT stored — only the headline, summary, and insights are stored as the belief content.
+
+---
+
 ## Validation Checklist (agent pre-flight before calling executeCode)
 
 - [ ] Script ends with exactly one `print(json.dumps({...}))` statement
@@ -138,3 +190,4 @@ The agent reads this and debugs before surfacing to the user.
 - [ ] Table envelopes include both `data` (array) and `columns` (array)
 - [ ] Multi envelopes have an `artifacts` array with valid sub-envelopes
 - [ ] `summary` is specific and includes numerical values
+- [ ] If `insights` is present: each is 1 sentence with a specific number, max 5 items

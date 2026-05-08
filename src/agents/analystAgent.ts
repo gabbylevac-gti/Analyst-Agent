@@ -21,39 +21,44 @@ import { saveCodeTemplateTool } from "../tools/saveCodeTemplate";
 import { saveDataDictionaryTool } from "../tools/saveDataDictionary";
 import { setSessionNameTool } from "../tools/setSessionName";
 import { fetchSensorDataTool } from "../tools/fetchSensorData";
+import { uploadDatasetTool } from "../tools/uploadDataset";
 import {
   INSTRUCTIONS,
-  SKILL_DRAFT_DATA_DICTIONARY,
-  SKILL_WRITE_ANALYSIS_CODE,
-  SKILL_INTERPRET_ARTIFACT,
-  SKILL_EXTRACT_BELIEF,
-  SKILL_SAVE_APPROVED_TEMPLATE,
-  SKILL_SUMMARIZE_SESSION,
   OUTPUT_CONTRACT,
+  DOMAIN_RADAR_SENSORS,
+  DOMAIN_PATH_CLASSIFICATION,
+  DOMAIN_RETAIL_CONTEXT,
+  DOMAIN_DR6000_SCHEMA,
+  SEED_BELIEFS,
 } from "../embedded-knowledge";
 
 // ─── Instructions assembly ────────────────────────────────────────────────────
-
-// All content is embedded as TypeScript string constants (see embedded-knowledge.ts)
-// so that esbuild bundles them into the .mjs artifact on Mastra Platform.
-// No filesystem reads at runtime — the container does not include source .md files.
+// Domain knowledge is bundled into the system prompt so it is:
+//   (a) cached by Anthropic prompt caching — not re-billed on every turn
+//   (b) NOT duplicated in getSessionContext tool results, which saves ~5k tokens
+//       per session from accumulating in the conversation context window.
 
 const instructionsText = [
   INSTRUCTIONS,
-  "\n\n---\n\n## Skills\n\n",
-  SKILL_DRAFT_DATA_DICTIONARY,
-  SKILL_WRITE_ANALYSIS_CODE,
-  SKILL_INTERPRET_ARTIFACT,
-  SKILL_EXTRACT_BELIEF,
-  SKILL_SAVE_APPROVED_TEMPLATE,
-  SKILL_SUMMARIZE_SESSION,
-  "\n\n---\n\n## Output Contract\n\n",
+  "---",
+  "## Output Contract",
   OUTPUT_CONTRACT,
-].join("\n\n---\n\n");
+  "---",
+  "## Domain Knowledge",
+  DOMAIN_RADAR_SENSORS,
+  "---",
+  DOMAIN_PATH_CLASSIFICATION,
+  "---",
+  DOMAIN_RETAIL_CONTEXT,
+  "---",
+  DOMAIN_DR6000_SCHEMA,
+  "---",
+  SEED_BELIEFS,
+].join("\n\n");
 
-// Cache the static system prompt so repeated requests don't re-count all
-// instruction tokens against the input token rate limit.
-const instructions: CoreSystemMessage = {
+// Static block — cached by Anthropic so repeated requests don't re-count all
+// instruction tokens. Content never changes, so cache always hits.
+const staticInstructions: CoreSystemMessage = {
   role: "system",
   content: instructionsText,
   providerOptions: {
@@ -61,12 +66,31 @@ const instructions: CoreSystemMessage = {
   },
 };
 
+// Dynamic block — injected per request with session context from the verified
+// request context (set by the edge function or Studio Variables panel).
+// Small enough that it doesn't meaningfully affect token cost.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildInstructions(requestContext: any): CoreSystemMessage[] {
+  const sessionId = requestContext.get("sessionId") as string | undefined;
+  const orgId = requestContext.get("orgId") as string | undefined;
+  if (!sessionId && !orgId) return [staticInstructions];
+  const lines = ["## Active Session Context"];
+  if (sessionId) lines.push(`- sessionId: ${sessionId}`);
+  if (orgId) lines.push(`- orgId: ${orgId}`);
+  lines.push(
+    "\nWhen calling `getSessionContext`, always pass the sessionId above. " +
+    "Never use \"current\" or any other placeholder."
+  );
+  const dynamic: CoreSystemMessage = { role: "system", content: lines.join("\n") };
+  return [staticInstructions, dynamic];
+}
+
 // ─── Agent ─────────────────────────────────────────────────────────────────────
 
 export const analystAgent = new Agent({
   id: "analyst",
   name: "analyst",
-  instructions,
+  instructions: ({ requestContext }) => buildInstructions(requestContext),
   model: anthropic("claude-sonnet-4-6"),
   requestContextSchema: z.object({
     sessionId: z.string().optional().describe("Current session ID"),
@@ -82,5 +106,6 @@ export const analystAgent = new Agent({
     saveDataDictionary: saveDataDictionaryTool,
     setSessionName: setSessionNameTool,
     fetchSensorData: fetchSensorDataTool,
+    uploadDataset: uploadDatasetTool,
   },
 });
