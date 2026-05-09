@@ -132,15 +132,15 @@ The agent reads this and debugs before surfacing to the user.
 
 ## Artifact as Take-Away Draft
 
-In the `/chat` and `/notebook` playbooks, every artifact that answers an analysis question is simultaneously the **Take-Away draft**. There is no separate card. The artifact envelope + the agent's Tell/Show/Tell response together form the approvable unit.
+In the `/chat` and `/notebook` playbooks, every artifact that answers an analysis question is simultaneously the **Take-Away draft**. There is no separate card. The artifact envelope + the agent's response together form the approvable unit.
 
 **What this means for the Python code:**
 
-The `summary` field is the agent's primary interpretation input — it becomes the "SHOW" layer (1–2 sentence chart interpretation). Write it as if it will be read aloud to someone who cannot see the chart.
+The `summary` field is the agent's primary interpretation input — it feeds the agent's Insights step (written as agent text after the charts). Write it as if it will be read aloud to someone who cannot see the chart.
 
-**Optional `insights` field (chart and multi envelopes only):**
+**Optional `insights` field (chart and multi envelopes only) — reference data for the agent, not rendered in the frontend:**
 
-Analysis code may include a pre-computed `insights` array to assist the agent in drafting the "TELL" supporting layer (2–5 insights). If present, the agent uses it as a starting point; if absent, the agent derives insights from `data`.
+Analysis code may include a pre-computed `insights` array to assist the agent in drafting the Insights step (2–5 bullets written as agent text after the last chart). The frontend does NOT render this field — it is agent-facing only. If present, the agent uses it as a starting point; if absent, the agent derives insights from `data`.
 
 ```json
 {
@@ -162,25 +162,93 @@ Analysis code may include a pre-computed `insights` array to assist the agent in
 - Insights must reference values from `data` — no fabrication.
 - If an insight would require the agent to re-run analysis, omit it and let the agent derive it.
 
-**Take-Away approval card lifecycle:**
+**Take-Away response lifecycle:**
 
 ```
 Agent response turn
-  ├── TELL: 1-sentence direct answer
-  ├── SHOW: artifact rendered (html) + summary interpreted as 1-2 sentence interpretation
-  ├── TELL: 2-5 insights (from insights[] or derived from data)
-  ├── Take-Away draft card (pending):
-  │     headline = chart title
-  │     evidence = summary + key insight values
-  │     [Approve as Take-Away] [Edit] [Discard]
-  └── CTA: 1-2 next questions
+  ├── Take-Away: 1-2 sentences with real numbers (from queryData output)
+  ├── Evidence: 1-4 executeAnalysis calls — one chart/table card each
+  ├── Insights: 2-5 bullet points as agent text after the last chart
+  ├── Actions: 1-3 next questions/actions (only if clearly warranted)
+  └── Take-Away draft card (pending):
+        headline = chart title
+        evidence = summary + key insight values
+        [Approve as Take-Away] [Edit] [Discard]
 ```
 
 Approved Take-Aways are written to the `knowledge_beliefs` table via `writeBelief`. The artifact HTML is NOT stored — only the headline, summary, and insights are stored as the belief content.
 
 ---
 
-## Validation Checklist (agent pre-flight before calling executeCode)
+---
+
+## queryData Exploration Contract
+
+The `queryData` tool runs exploration code to give the agent real statistics before it writes the Take-Away. **This is not an artifact envelope** — the tool does not render a chart or table card in the frontend. The user sees only a collapsed tool indicator.
+
+### Exploration code pattern
+
+```python
+import requests, os, json
+import pandas as pd
+
+_headers = {
+    "apikey": os.environ["SUPABASE_KEY"],
+    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}",
+}
+rows, _offset = [], 0
+while True:
+    _resp = requests.get(
+        f"{os.environ['SUPABASE_URL']}/rest/v1/dataset_records",
+        headers={**_headers, "Range": f"{_offset}-{_offset+999}"},
+        params={"raw_upload_id": f"eq.{os.environ['RAW_UPLOAD_ID']}", "select": "data"},
+    )
+    _batch = _resp.json()
+    if not _batch: break
+    rows.extend(b["data"] for b in _batch)
+    if len(_batch) < 1000: break
+    _offset += 1000
+df = pd.DataFrame(rows)
+# ... compute statistics ...
+print(json.dumps({
+    "n_paths": 847,
+    "engagement_rate": 23.4,
+    "median_dwell_s": 18.4,
+    "summary": "847 clean paths. Engagement rate 23.4%. Median dwell 18.4s for non-ghost paths."
+}))
+```
+
+### Rules
+
+- The final `print` must output a JSON object — not a chart envelope.
+- Include a `summary` key with a plain-language sentence summarizing the key findings.
+- All other keys are named statistics the agent will reference in its Take-Away.
+- Do NOT include `type`, `html`, `data`, or `artifacts` — those are artifact envelope fields and will cause the tool to error.
+- Do NOT write to `analysis_artifacts` — this tool is exploration-only.
+- Pre-installed libraries: `pandas`, `numpy`, `requests`. Do NOT use `plotly` in exploration code.
+
+---
+
+## Transform Contract (executeTransform only)
+
+Transform templates output a single JSON envelope that the `executeTransform` tool reads and uses to write rows to `dataset_records`. This is a different contract from the analysis envelope above.
+
+```json
+{
+  "type": "transform",
+  "rows": [ { "target_id": "...", "dwell_seconds": 12.3, ... }, ... ],
+  "summary": "5,847 paths written. QR-1 removed 420 off-hours paths. QR-2 removed 83 short paths."
+}
+```
+
+- `type` must be exactly `"transform"` — the tool validates this.
+- `rows` is an array of path-level record objects, one per `target_id`. Each object becomes one row in `dataset_records.data` (JSONB).
+- `summary` is displayed to the agent as confirmation after the write. Include row count and filter stats.
+- Do NOT include HTML, charts, or analysis output in a transform envelope — the tool only reads `rows` and `summary`.
+
+---
+
+## Validation Checklist (agent pre-flight before calling executeAnalysis)
 
 - [ ] Script ends with exactly one `print(json.dumps({...}))` statement
 - [ ] The printed object has `type`, `title`, and `summary` at minimum

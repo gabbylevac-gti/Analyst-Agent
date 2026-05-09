@@ -1,108 +1,138 @@
 """
 Template: path-aggregation
-Purpose:  Convert raw sensor position rows into one row per target_id (path).
-          Computes dwell time, positional statistics, and movement features.
-          This is the foundational step — all classification and engagement analysis
-          builds on the output of this template.
+Stage:    Analysis (Stage 2 — reads from dataset_records / clean layer)
+Purpose:  Return the clean path-level records for a given upload, optionally filtered
+          by date range and sensor name. The data in dataset_records is already
+          aggregated to one row per target_id (path) by the transform step.
+          Use this to inspect what the clean layer contains before running
+          classification or engagement templates.
 
-Inputs ({{PLACEHOLDER}} tokens):
-  {{START_TIME}}      ISO timestamp string for window start (e.g., "2026-04-06 07:00:00")
-  {{END_TIME}}        ISO timestamp string for window end (e.g., "2026-04-10 20:00:00")
-  {{SENSOR_FILTER}}   Sensor name to filter on (e.g., "radar-001"), or "" to include all sensors
-  {{MIN_POINTS}}      Minimum number of position readings to include a path (e.g., 2)
+Inputs ({{PLACEHOLDER}} tokens — agent fills these before calling executeAnalysis):
+  {{START_DATE}}      ISO date string for window start (e.g., "2026-04-06"), or "" for all
+  {{END_DATE}}        ISO date string for window end (e.g., "2026-04-10"), or "" for all
+  {{SENSOR_FILTER}}   Sensor name to filter on (e.g., "radar-001"), or "" to include all
+  {{MIN_POINTS}}      Minimum point_count to include a path (e.g., 2)
 
-Output: table envelope with one row per target_id.
+Runtime env vars (injected by executeAnalysis tool — do not modify):
+  SUPABASE_URL     Supabase project URL
+  SUPABASE_KEY     Supabase service role key
+  RAW_UPLOAD_ID    raw_data_uploads.id to filter dataset_records
+
+Output: table envelope with one row per path (target_id).
 """
 
-import pandas as pd
-import numpy as np
 import json
-from datetime import datetime
+import os
 
-# ── Load data ──────────────────────────────────────────────────────────────────
-df = pd.read_csv('/sandbox/upload.csv', parse_dates=['log_creation_time', 'processed_at'])
+import requests
+
+import numpy as np
+import pandas as pd
+
+# ── Parameters ─────────────────────────────────────────────────────────────────
+START_DATE = "{{START_DATE}}"
+END_DATE = "{{END_DATE}}"
+SENSOR_FILTER = "{{SENSOR_FILTER}}"
+MIN_POINTS = {{MIN_POINTS}}
+
+RAW_UPLOAD_ID = os.environ["RAW_UPLOAD_ID"]
+
+# ── Load from dataset_records (Supabase REST API) ──────────────────────────────
+_headers = {
+    "apikey": os.environ["SUPABASE_KEY"],
+    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}",
+}
+rows, _offset = [], 0
+while True:
+    _resp = requests.get(
+        f"{os.environ['SUPABASE_URL']}/rest/v1/dataset_records",
+        headers={**_headers, "Range": f"{_offset}-{_offset+999}"},
+        params={"raw_upload_id": f"eq.{RAW_UPLOAD_ID}", "select": "data"},
+    )
+    _batch = _resp.json()
+    if not _batch:
+        break
+    rows.extend(b["data"] for b in _batch)
+    if len(_batch) < 1000:
+        break
+    _offset += 1000
+
+if not rows:
+    print(json.dumps({
+        "type": "error", "title": "No Data",
+        "message": (
+            "No records found in dataset_records for this upload. "
+            "Run executeTransform first to populate the clean data layer."
+        ),
+        "traceback": ""
+    }))
+    raise SystemExit
+
+path_summary = pd.DataFrame(rows)
 
 # ── Apply filters ──────────────────────────────────────────────────────────────
-start_time = pd.Timestamp("{{START_TIME}}")
-end_time = pd.Timestamp("{{END_TIME}}")
-sensor_filter = "{{SENSOR_FILTER}}"
-min_points = {{MIN_POINTS}}
+if START_DATE and "session_date" in path_summary.columns:
+    path_summary = path_summary[path_summary["session_date"] >= START_DATE]
 
-df = df[(df['log_creation_time'] >= start_time) & (df['log_creation_time'] <= end_time)]
+if END_DATE and "session_date" in path_summary.columns:
+    path_summary = path_summary[path_summary["session_date"] <= END_DATE]
 
-if sensor_filter:
-    df = df[df['sensor_name'] == sensor_filter]
+if SENSOR_FILTER and "sensor_name" in path_summary.columns:
+    path_summary = path_summary[path_summary["sensor_name"] == SENSOR_FILTER]
 
-# ── Aggregate to path level ────────────────────────────────────────────────────
-path_summary = (
-    df.groupby('target_id')
-    .agg(
-        start_time=('log_creation_time', 'min'),
-        end_time=('log_creation_time', 'max'),
-        point_count=('log_creation_time', 'count'),
-        # Dwell
-        dwell_seconds=('log_creation_time', lambda x: (x.max() - x.min()).total_seconds()),
-        # X-axis statistics
-        mean_x=('x_m', 'mean'),
-        std_x=('x_m', 'std'),
-        min_x=('x_m', 'min'),
-        max_x=('x_m', 'max'),
-        q1_x=('x_m', lambda x: x.quantile(0.25)),
-        q3_x=('x_m', lambda x: x.quantile(0.75)),
-        # Y-axis statistics
-        mean_y=('y_m', 'mean'),
-        std_y=('y_m', 'std'),
-        min_y=('y_m', 'min'),
-        max_y=('y_m', 'max'),
-        q1_y=('y_m', lambda x: x.quantile(0.25)),
-        q3_y=('y_m', lambda x: x.quantile(0.75)),
-        # Derived features
-        sensor_name=('sensor_name', 'first'),
-    )
-    .reset_index()
-)
+if "point_count" in path_summary.columns:
+    path_summary["point_count"] = pd.to_numeric(path_summary["point_count"], errors="coerce").fillna(0)
+    path_summary = path_summary[path_summary["point_count"] >= MIN_POINTS]
 
-# Compute derived movement features
-path_summary['range_x'] = path_summary['max_x'] - path_summary['min_x']
-path_summary['range_y'] = path_summary['max_y'] - path_summary['min_y']
-path_summary['pos_std_combined'] = np.sqrt(
-    path_summary['std_x'].fillna(0)**2 + path_summary['std_y'].fillna(0)**2
-)
-path_summary['start_hour'] = path_summary['start_time'].dt.hour
+# ── Compute derived features ───────────────────────────────────────────────────
+if "std_x" in path_summary.columns and "std_y" in path_summary.columns:
+    path_summary["std_x"] = pd.to_numeric(path_summary["std_x"], errors="coerce").fillna(0.0)
+    path_summary["std_y"] = pd.to_numeric(path_summary["std_y"], errors="coerce").fillna(0.0)
+    path_summary["pos_std_combined"] = np.sqrt(
+        path_summary["std_x"] ** 2 + path_summary["std_y"] ** 2
+    ).round(3)
 
-# Filter minimum points
-path_summary = path_summary[path_summary['point_count'] >= min_points]
+# ── Sort and round ─────────────────────────────────────────────────────────────
+if "start_time" in path_summary.columns:
+    path_summary = path_summary.sort_values("start_time", ascending=False)
 
-# Sort by start_time descending
-path_summary = path_summary.sort_values('start_time', ascending=False)
-
-# Round floats
-float_cols = path_summary.select_dtypes(include=['float64']).columns
+float_cols = path_summary.select_dtypes(include=["float64", "float32"]).columns
 path_summary[float_cols] = path_summary[float_cols].round(3)
-
-# Convert timestamps to strings for JSON serialization
-path_summary['start_time'] = path_summary['start_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
-path_summary['end_time'] = path_summary['end_time'].dt.strftime('%Y-%m-%d %H:%M:%S')
 
 # ── Build output envelope ──────────────────────────────────────────────────────
 total_paths = len(path_summary)
-median_dwell = round(path_summary['dwell_seconds'].median(), 1)
-max_dwell = round(path_summary['dwell_seconds'].max(), 1)
-short_paths = int((path_summary['dwell_seconds'] < 3).sum())
+
+if total_paths == 0:
+    print(json.dumps({
+        "type": "error", "title": "No Paths After Filtering",
+        "message": "No paths matched the filter criteria. Try wider date range or remove sensor filter.",
+        "traceback": ""
+    }))
+    raise SystemExit
+
+dwell_col = "dwell_seconds" if "dwell_seconds" in path_summary.columns else None
+median_dwell = round(pd.to_numeric(path_summary[dwell_col], errors="coerce").median(), 1) if dwell_col else 0.0
+max_dwell = round(pd.to_numeric(path_summary[dwell_col], errors="coerce").max(), 1) if dwell_col else 0.0
+short_paths = int((pd.to_numeric(path_summary[dwell_col], errors="coerce") < 3).sum()) if dwell_col else 0
 pct_short = round(100 * short_paths / total_paths, 1) if total_paths > 0 else 0
-sensor_label = f" | sensor: {sensor_filter}" if sensor_filter else ""
+
+sensor_label = f" | sensor: {SENSOR_FILTER}" if SENSOR_FILTER else ""
+date_label = ""
+if START_DATE or END_DATE:
+    date_label = f" | {START_DATE or '...'} to {END_DATE or '...'}"
 
 summary = (
-    f"Path aggregation: {total_paths} unique paths | "
-    f"{start_time.date()} to {end_time.date()}{sensor_label}. "
+    f"Path aggregation: {total_paths} clean paths{sensor_label}{date_label}. "
     f"Median dwell: {median_dwell}s, max: {max_dwell}s. "
     f"{short_paths} paths ({pct_short}%) under 3 seconds."
 )
 
+columns = list(path_summary.columns)
+
 print(json.dumps({
     "type": "table",
-    "title": f"Path Summary ({total_paths} paths)",
-    "data": path_summary.to_dict(orient='records'),
-    "columns": list(path_summary.columns),
-    "summary": summary
+    "title": f"Clean Path Records ({total_paths} paths)",
+    "data": path_summary.to_dict(orient="records"),
+    "columns": columns,
+    "summary": summary,
 }))

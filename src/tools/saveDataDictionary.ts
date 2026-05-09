@@ -67,11 +67,20 @@ export const saveDataDictionaryTool = createTool({
     try {
       const approvalStatus: "pending" | "approved" = context.pendingApproval ? "pending" : "approved";
 
+      // Normalise signature to sorted order so it always matches the record
+      // created by uploadDataset (which also sorts). Without this, an unsorted
+      // signature from the agent creates a duplicate record instead of updating.
+      const normalisedSignature = context.columnSignature
+        .split(",")
+        .map((c) => c.trim())
+        .sort()
+        .join(",");
+
       // Check for an existing record with this column signature
       const { data: existing } = await supabase
         .from("datasets")
         .select("id")
-        .eq("column_signature", context.columnSignature)
+        .eq("column_signature", normalisedSignature)
         .limit(1)
         .maybeSingle();
 
@@ -99,7 +108,7 @@ export const saveDataDictionaryTool = createTool({
       } else {
         const { data, error } = await supabase
           .from("datasets")
-          .insert({ ...sharedPayload, column_signature: context.columnSignature })
+          .insert({ ...sharedPayload, column_signature: normalisedSignature })
           .select("id")
           .single();
         if (error) throw error;

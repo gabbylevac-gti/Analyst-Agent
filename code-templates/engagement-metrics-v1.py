@@ -5,81 +5,90 @@ Purpose:  Core business metrics for DR6000 sensor deployments.
           Produces traffic volume, engagement rate, and dwell distribution
           for a given time window, broken down by day.
 
+          Data is already path-level (QR-1 off-hours and QR-2 min-points applied
+          by the transform step). Ghost filter (QR-3) applied here using confirmed thresholds.
+
           Engagement rate definition: engaged paths / (engaged + passer-by paths)
           — of all real people who entered the zone, what % stopped and engaged.
-          Ghost paths are excluded from both the numerator and denominator.
+          Ghost paths are excluded from both numerator and denominator.
 
-          Prerequisite: ghost thresholds (GHOST_DWELL_S, GHOST_STD_M) and engaged
-          threshold (ENGAGED_DWELL_S) must be confirmed in the org's Data Dictionary
-          before running this template. Run quality-check-sensor-v1.py and
-          path-trajectory-plot.py first if thresholds have not been validated for
-          this deployment.
+          Prerequisite: executeTransform must have run first to populate dataset_records.
+          Ghost thresholds (GHOST_DWELL_S, GHOST_STD_M) and engaged threshold
+          (ENGAGED_DWELL_S) must be confirmed in the org's Data Dictionary.
 
-Inputs ({{PLACEHOLDER}} tokens):
-  {{CSV_URL}}             Public URL of the raw CSV file (POC: direct CSV; target: reads from dataset_records)
-  {{STORE_OPEN_HOUR}}     First valid hour of day (from Data Dictionary)
-  {{STORE_CLOSE_HOUR}}    First invalid hour of day (from Data Dictionary)
-  {{X_MIN}}, {{X_MAX}}    Valid x coordinate bounds in meters (from Data Dictionary — deployment-specific)
-  {{Y_MIN}}, {{Y_MAX}}    Valid y coordinate bounds in meters (from Data Dictionary — deployment-specific)
-  {{MIN_POINTS}}          Minimum readings per path (from Data Dictionary)
-  {{GHOST_DWELL_S}}       Ghost dwell threshold in seconds (from Data Dictionary — deployment-specific)
-  {{GHOST_STD_M}}         Ghost positional std threshold in meters (from Data Dictionary — deployment-specific)
-  {{ENGAGED_DWELL_S}}     Minimum dwell for engaged classification (from Data Dictionary — deployment-specific)
+Inputs ({{PLACEHOLDER}} tokens — agent fills these before calling executeAnalysis):
+  {{GHOST_DWELL_S}}       Ghost dwell threshold in seconds (from Data Dictionary)
+  {{GHOST_STD_M}}         Ghost positional std threshold in meters (from Data Dictionary)
+  {{ENGAGED_DWELL_S}}     Minimum dwell for engaged classification (from Data Dictionary)
+
+Runtime env vars (injected by executeAnalysis tool — do not modify):
+  SUPABASE_URL     Supabase project URL
+  SUPABASE_KEY     Supabase service role key
+  RAW_UPLOAD_ID    raw_data_uploads.id to filter dataset_records
 
 Output: multi envelope — daily metrics chart + dwell distribution chart + summary text
 """
 
-import pandas as pd
-import numpy as np
 import json
+import os
 import uuid
 
+import requests
+
+import numpy as np
+import pandas as pd
+
 # ── Parameters ─────────────────────────────────────────────────────────────────
-CSV_URL = "{{CSV_URL}}"
-STORE_OPEN_HOUR = {{STORE_OPEN_HOUR}}
-STORE_CLOSE_HOUR = {{STORE_CLOSE_HOUR}}
-X_MIN, X_MAX = {{X_MIN}}, {{X_MAX}}
-Y_MIN, Y_MAX = {{Y_MIN}}, {{Y_MAX}}
-MIN_POINTS = {{MIN_POINTS}}
 GHOST_DWELL_S = {{GHOST_DWELL_S}}
 GHOST_STD_M = {{GHOST_STD_M}}
 ENGAGED_DWELL_S = {{ENGAGED_DWELL_S}}
 
-# ── Load and quality filter ────────────────────────────────────────────────────
-df = pd.read_csv(CSV_URL, parse_dates=["log_creation_time"])
-df["hour_of_day"] = df["log_creation_time"].dt.hour
+RAW_UPLOAD_ID = os.environ["RAW_UPLOAD_ID"]
 
-df = df[
-    (df["hour_of_day"] >= STORE_OPEN_HOUR) &
-    (df["hour_of_day"] < STORE_CLOSE_HOUR) &
-    df["x_m"].notna() & df["y_m"].notna() &
-    (df["x_m"] >= X_MIN) & (df["x_m"] <= X_MAX) &
-    (df["y_m"] >= Y_MIN) & (df["y_m"] <= Y_MAX)
-]
+# ── Load from dataset_records (Supabase REST API) ──────────────────────────────
+_headers = {
+    "apikey": os.environ["SUPABASE_KEY"],
+    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}",
+}
+rows, _offset = [], 0
+while True:
+    _resp = requests.get(
+        f"{os.environ['SUPABASE_URL']}/rest/v1/dataset_records",
+        headers={**_headers, "Range": f"{_offset}-{_offset+999}"},
+        params={"raw_upload_id": f"eq.{RAW_UPLOAD_ID}", "select": "data"},
+    )
+    _batch = _resp.json()
+    if not _batch:
+        break
+    rows.extend(b["data"] for b in _batch)
+    if len(_batch) < 1000:
+        break
+    _offset += 1000
 
-if len(df) == 0:
+if not rows:
     print(json.dumps({
-        "type": "error", "title": "No data after quality filters",
-        "message": "All rows were removed by quality filters. Check store hours and zone bounds.",
+        "type": "error", "title": "No Data",
+        "message": (
+            "No records found in dataset_records for this upload. "
+            "Run executeTransform first to populate the clean data layer."
+        ),
         "traceback": ""
     }))
     raise SystemExit
 
-# ── Aggregate to path level ────────────────────────────────────────────────────
-paths = (
-    df.groupby("target_id")
-    .agg(
-        session_date=("log_creation_time", lambda x: x.min().date()),
-        dwell_seconds=("log_creation_time", lambda x: (x.max() - x.min()).total_seconds()),
-        point_count=("log_creation_time", "count"),
-        std_x=("x_m", "std"),
-        std_y=("y_m", "std"),
-    )
-    .reset_index()
-)
-paths["std_x"] = paths["std_x"].fillna(0.0)
-paths["std_y"] = paths["std_y"].fillna(0.0)
-paths = paths[paths["point_count"] >= MIN_POINTS].copy()
+paths = pd.DataFrame(rows)
+
+# ── Validate and coerce ────────────────────────────────────────────────────────
+for col in ["dwell_seconds", "std_x", "std_y"]:
+    paths[col] = pd.to_numeric(paths.get(col, 0), errors="coerce").fillna(0.0)
+
+if "session_date" not in paths.columns:
+    print(json.dumps({
+        "type": "error", "title": "Schema Mismatch",
+        "message": "dataset_records missing session_date column. Re-run transform.",
+        "traceback": ""
+    }))
+    raise SystemExit
 
 # ── Classify ───────────────────────────────────────────────────────────────────
 is_ghost = (
@@ -113,8 +122,8 @@ daily = (
     real_paths.groupby("session_date")
     .apply(lambda g: pd.Series({
         "traffic": len(g),
-        "engaged": (g["classification"] == "engaged").sum(),
-        "passer_by": (g["classification"] == "passer-by").sum(),
+        "engaged": int((g["classification"] == "engaged").sum()),
+        "passer_by": int((g["classification"] == "passer-by").sum()),
         "engagement_rate": round(
             100 * (g["classification"] == "engaged").sum() / len(g), 1
         ) if len(g) > 0 else 0.0,
@@ -124,7 +133,7 @@ daily = (
 )
 daily["session_date"] = daily["session_date"].astype(str)
 
-# ── Chart 1: Daily traffic volume + engagement rate ───────────────────────────
+# ── Chart 1: Daily traffic + engagement rate ───────────────────────────────────
 chart1_id = f"plotly-{uuid.uuid4().hex[:8]}"
 
 traffic_trace = {
@@ -187,7 +196,7 @@ chart1_envelope = {
     ),
 }
 
-# ── Chart 2: Dwell distribution for real paths ────────────────────────────────
+# ── Chart 2: Dwell distribution ────────────────────────────────────────────────
 chart2_id = f"plotly-{uuid.uuid4().hex[:8]}"
 
 engaged_dwell = real_paths.loc[
@@ -219,7 +228,7 @@ dwell_traces = [
 ]
 
 layout2 = {
-    "title": {"text": f"Dwell Time Distribution — Real Paths (ghost-filtered)"},
+    "title": {"text": "Dwell Time Distribution — Real Paths (ghost-filtered)"},
     "xaxis": {"title": "Dwell Time (seconds)"},
     "yaxis": {"title": "Path Count"},
     "barmode": "overlay",
@@ -287,8 +296,8 @@ text_content = f"""## Engagement Metrics Summary
 - Engagement rate range: {round(daily['engagement_rate'].min(), 1)}%–{round(daily['engagement_rate'].max(), 1)}%
 
 ### Classification Thresholds Used
-- Ghost: dwell < {GHOST_DWELL_S}s AND positional std < {GHOST_STD_M}m *(pending validation)*
-- Engaged: dwell ≥ {ENGAGED_DWELL_S}s *(adjust per deployment)*
+- Ghost: dwell < {GHOST_DWELL_S}s AND positional std < {GHOST_STD_M}m
+- Engaged: dwell ≥ {ENGAGED_DWELL_S}s
 - Passer-by: all other real paths
 """
 

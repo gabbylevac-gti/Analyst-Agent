@@ -51,6 +51,10 @@ export const getSessionContextTool = createTool({
   outputSchema: z.object({
     staticKnowledge: z.string(),
     orgId: z.string().optional(),
+    phase: z.enum(["objective", "setup", "analysis", "wrap_up"]).optional(),
+    objective: z.string().optional(),
+    activeDatasetId: z.string().optional(),
+    datasetApprovalStatus: z.enum(["none", "pending", "approved"]).optional(),
     beliefs: z.array(
       z.object({
         id: z.string(),
@@ -86,6 +90,7 @@ export const getSessionContextTool = createTool({
       })
       .optional(),
     csvUrl: z.string().optional(),
+    rawUploadId: z.string().optional(),
     endPointId: z.string().optional(),
     rangeStart: z.string().optional(),
     rangeEnd: z.string().optional(),
@@ -106,7 +111,7 @@ export const getSessionContextTool = createTool({
     // ── Fetch session record once — org_id scopes all subsequent reads/writes ─
     const { data: sessionRecord } = await supabase
       .from("sessions")
-      .select("csv_storage_path, csv_public_url, org_id, end_point_id, range_start, range_end")
+      .select("csv_storage_path, csv_public_url, org_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id")
       .eq("id", resolvedSessionId)
       .single();
 
@@ -165,42 +170,69 @@ export const getSessionContextTool = createTool({
     if (orgId) summariesQuery = summariesQuery.eq("org_id", orgId);
     const { data: sessionSummaries } = await summariesQuery;
 
-    // ── 5. Data dictionary for current CSV schema ──────────────────────────
+    // ── 5. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
     let dataDictionary = undefined;
+    let datasetApprovalStatus: "none" | "pending" | "approved" = "none";
+    let activeDatasetId: string | undefined = sessionRecord?.active_dataset_id ?? undefined;
     let csvUrl: string | undefined = undefined;
 
     if (sessionRecord?.csv_public_url) {
       csvUrl = sessionRecord.csv_public_url;
     }
 
-    // Look for matching data dictionary by column signature, scoped to org
-    if (csvColumnSignature) {
+    // Primary lookup: use active_dataset_id if the session already has one linked.
+    // This works across sessions without needing the column signature.
+    if (activeDatasetId) {
+      const { data: linkedDataset } = await supabase
+        .from("datasets")
+        .select("id, filename, schema_json, data_dictionary_json, deployment_context, approval_status")
+        .eq("id", activeDatasetId)
+        .maybeSingle();
+
+      if (linkedDataset) {
+        datasetApprovalStatus = (linkedDataset.approval_status as "none" | "pending" | "approved") ?? "none";
+        if (linkedDataset.approval_status === "approved" && linkedDataset.data_dictionary_json) {
+          dataDictionary = linkedDataset;
+        }
+      }
+    }
+
+    // Fallback: match by column signature if no active dataset is linked yet.
+    // Used during the first session with a new CSV, before updateSession is called.
+    if (!dataDictionary && csvColumnSignature) {
       let datasetQuery = supabase
         .from("datasets")
-        .select("filename, schema_json, data_dictionary_json, deployment_context")
+        .select("filename, schema_json, data_dictionary_json, deployment_context, approval_status")
         .eq("column_signature", csvColumnSignature)
-        .eq("approval_status", "approved")
         .not("data_dictionary_json", "is", null)
         .order("created_at", { ascending: false })
         .limit(1);
 
       if (orgId) datasetQuery = datasetQuery.eq("org_id", orgId);
 
-      const { data: matchingDataset } = await datasetQuery.single();
+      const { data: matchingDataset } = await datasetQuery.maybeSingle();
 
       if (matchingDataset) {
-        dataDictionary = matchingDataset;
+        datasetApprovalStatus = (matchingDataset.approval_status as "none" | "pending" | "approved") ?? "none";
+        if (matchingDataset.approval_status === "approved") {
+          dataDictionary = matchingDataset;
+        }
       }
     }
 
     return {
       staticKnowledge,
       orgId,
+      phase: (sessionRecord?.phase as "objective" | "setup" | "analysis" | "wrap_up") ?? "objective",
+      objective: sessionRecord?.objective ?? undefined,
+      activeDatasetId,
+      datasetApprovalStatus,
       beliefs: beliefs ?? [],
       codeTemplates: codeTemplates ?? [],
       sessionSummaries: sessionSummaries ?? [],
       dataDictionary,
       csvUrl,
+      rawUploadId: sessionRecord?.raw_upload_id ?? undefined,
       endPointId: sessionRecord?.end_point_id ?? undefined,
       rangeStart: sessionRecord?.range_start ?? undefined,
       rangeEnd: sessionRecord?.range_end ?? undefined,

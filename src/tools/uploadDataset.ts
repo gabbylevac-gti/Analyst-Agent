@@ -26,10 +26,19 @@ function getSupabase() {
   );
 }
 
+const TIMESTAMP_COLUMNS = new Set([
+  "log_creation_time", "processed_at", "created_at", "updated_at",
+  "timestamp", "event_time", "record_time", "start_time", "end_time",
+]);
+
 function inferColumnType(header: string, sampleValue: string): string {
   const h = header.toLowerCase();
-  if (h.includes("_at") || h.includes("time") || h.includes("date")) return "timestamp";
-  if (h.includes("_id") || h === "id") return "uuid";
+  // Exact-match known timestamp columns first to avoid false positives on
+  // names like "timezone_offset" or "timezone_label" that contain "time".
+  if (TIMESTAMP_COLUMNS.has(h) || h.endsWith("_at")) return "timestamp";
+  // Only treat *_id as uuid when the sample value looks like a real UUID.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if ((h.endsWith("_id") || h === "id") && UUID_RE.test(sampleValue)) return "uuid";
   if (h.includes("_m") || h === "proximity_m") return "float";
   if (h.includes("dwell") || h.includes("count") || h.includes("duration")) return "float";
   if (sampleValue && !isNaN(Number(sampleValue)) && sampleValue.trim() !== "") return "numeric";
@@ -57,6 +66,7 @@ export const uploadDatasetTool = createTool({
   outputSchema: z.object({
     success: z.boolean(),
     datasetId: z.string().optional(),
+    rawUploadId: z.string().optional(),
     csvUrl: z.string().optional(),
     filename: z.string().optional(),
     columns: z.array(z.object({ name: z.string(), type: z.string() })).optional(),
@@ -122,17 +132,50 @@ export const uploadDatasetTool = createTool({
       };
     }
 
-    // ── 4. Write csvUrl back to session so getSessionContext returns it ────────
+    // ── 4. Write raw_data_uploads record ─────────────────────────────────────
+    // Extract storage_path from csvUrl. The URL format is:
+    // https://[project].supabase.co/storage/v1/object/public/csv-uploads/[path]
+    const storagePathMatch = csvUrl.match(/\/csv-uploads\/(.+)$/);
+    const storagePath = storagePathMatch ? storagePathMatch[1] : csvUrl;
+
+    const { data: rawUpload, error: rawUploadError } = await supabase
+      .from("raw_data_uploads")
+      .insert({
+        org_id: orgId,
+        source_type: "csv_upload",
+        filename,
+        storage_path: storagePath,
+        storage_url: csvUrl,
+        row_count: rowCount,
+        session_id: sessionId,
+      })
+      .select("id")
+      .single();
+
+    const rawUploadId = rawUpload?.id as string | undefined;
+
+    // ── 5. Write csvUrl + raw_upload_id back to session ───────────────────────
     // Without this, the next turn's getSessionContext call finds no csvUrl and
     // the agent incorrectly concludes no data is loaded.
     await supabase
       .from("sessions")
-      .update({ csv_public_url: csvUrl, csv_filename: filename })
+      .update({
+        csv_public_url: csvUrl,
+        csv_filename: filename,
+        ...(rawUploadId ? { raw_upload_id: rawUploadId } : {}),
+      })
       .eq("id", sessionId);
+
+    if (rawUploadError) {
+      // Non-fatal — dataset record was written, raw_upload record failed.
+      // Agent can proceed; M1.5 transform will be blocked but dataset is usable.
+      console.error("raw_data_uploads insert failed:", rawUploadError.message);
+    }
 
     return {
       success: true,
       datasetId: dataset.id as string,
+      rawUploadId,
       csvUrl,
       filename,
       columns,

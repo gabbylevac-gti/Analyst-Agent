@@ -2,113 +2,101 @@
 Template: path-classification-v1
 Stage:    Analysis (Stage 2 — reads from dataset_records / clean layer)
 Purpose:  Classify each path as ghost, passer-by, or engaged using deployment-specific
-          thresholds confirmed in the org's Data Dictionary. Applies quality filters
-          (off-hours, range, min points) then classification. Produces a classified
-          paths table and a classification summary chart.
+          thresholds confirmed in the org's Data Dictionary. Data is already path-level
+          (QR-1 off-hours and QR-2 min-points applied by the transform step).
+          Applies ghost filter (QR-3) at analysis time using confirmed thresholds.
+          Produces a classification summary chart and a classified paths table.
 
           This is the definitive classification template. Use it when you need
           the full 3-way label for downstream analysis. For ghost-only filtering
           with a simpler output, use dr6000-ghost-filter-v1.py instead.
 
-          Prerequisite: ghost thresholds (GHOST_DWELL_S, GHOST_STD_M) and engaged
-          threshold (ENGAGED_DWELL_S) must be confirmed in the org's Data Dictionary
-          before running this template. Run quality-check-sensor-v1.py and
-          path-trajectory-plot.py first if thresholds have not been validated.
+          Prerequisite: executeTransform must have run first to populate dataset_records.
+          Ghost thresholds (GHOST_DWELL_S, GHOST_STD_M) and engaged threshold
+          (ENGAGED_DWELL_S) must be confirmed in the org's Data Dictionary.
 
-Inputs ({{PLACEHOLDER}} tokens):
-  {{CSV_URL}}             Public URL of the raw CSV file (POC: direct CSV; target: reads from dataset_records)
-  {{STORE_OPEN_HOUR}}     First valid hour of day (from Data Dictionary)
-  {{STORE_CLOSE_HOUR}}    First invalid hour of day (from Data Dictionary)
-  {{X_MIN}}, {{X_MAX}}    Valid x coordinate bounds in meters (from Data Dictionary — deployment-specific)
-  {{Y_MIN}}, {{Y_MAX}}    Valid y coordinate bounds in meters (from Data Dictionary — deployment-specific)
-  {{MIN_POINTS}}          Minimum readings per path (from Data Dictionary)
-  {{GHOST_DWELL_S}}       Ghost dwell threshold in seconds (from Data Dictionary — deployment-specific)
-  {{GHOST_STD_M}}         Ghost positional std threshold in meters (from Data Dictionary — deployment-specific)
-  {{ENGAGED_DWELL_S}}     Minimum dwell for engaged classification (from Data Dictionary — deployment-specific)
+Inputs ({{PLACEHOLDER}} tokens — agent fills these before calling executeAnalysis):
+  {{GHOST_DWELL_S}}       Ghost dwell threshold in seconds (from Data Dictionary)
+  {{GHOST_STD_M}}         Ghost positional std threshold in meters (from Data Dictionary)
+  {{ENGAGED_DWELL_S}}     Minimum dwell for engaged classification (from Data Dictionary)
+
+Runtime env vars (injected by executeAnalysis tool — do not modify):
+  SUPABASE_URL     Supabase project URL
+  SUPABASE_KEY     Supabase service role key
+  RAW_UPLOAD_ID    raw_data_uploads.id to filter dataset_records
 
 Output: multi envelope — classification summary chart + classified paths table
 """
 
-import pandas as pd
-import numpy as np
 import json
+import os
 import uuid
 
+import requests
+
+import pandas as pd
+
 # ── Parameters ─────────────────────────────────────────────────────────────────
-CSV_URL = "{{CSV_URL}}"
-STORE_OPEN_HOUR = {{STORE_OPEN_HOUR}}
-STORE_CLOSE_HOUR = {{STORE_CLOSE_HOUR}}
-X_MIN, X_MAX = {{X_MIN}}, {{X_MAX}}
-Y_MIN, Y_MAX = {{Y_MIN}}, {{Y_MAX}}
-MIN_POINTS = {{MIN_POINTS}}
 GHOST_DWELL_S = {{GHOST_DWELL_S}}
 GHOST_STD_M = {{GHOST_STD_M}}
 ENGAGED_DWELL_S = {{ENGAGED_DWELL_S}}
 
-# ── Load and filter ────────────────────────────────────────────────────────────
-df = pd.read_csv(CSV_URL, parse_dates=["log_creation_time"])
-df["hour_of_day"] = df["log_creation_time"].dt.hour
+RAW_UPLOAD_ID = os.environ["RAW_UPLOAD_ID"]
 
-# Apply quality filters
-df = df[
-    (df["hour_of_day"] >= STORE_OPEN_HOUR) &
-    (df["hour_of_day"] < STORE_CLOSE_HOUR) &
-    df["x_m"].notna() & df["y_m"].notna() &
-    (df["x_m"] >= X_MIN) & (df["x_m"] <= X_MAX) &
-    (df["y_m"] >= Y_MIN) & (df["y_m"] <= Y_MAX)
-]
+# ── Load from dataset_records (Supabase REST API) ──────────────────────────────
+_headers = {
+    "apikey": os.environ["SUPABASE_KEY"],
+    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}",
+}
+rows, _offset = [], 0
+while True:
+    _resp = requests.get(
+        f"{os.environ['SUPABASE_URL']}/rest/v1/dataset_records",
+        headers={**_headers, "Range": f"{_offset}-{_offset+999}"},
+        params={"raw_upload_id": f"eq.{RAW_UPLOAD_ID}", "select": "data"},
+    )
+    _batch = _resp.json()
+    if not _batch:
+        break
+    rows.extend(b["data"] for b in _batch)
+    if len(_batch) < 1000:
+        break
+    _offset += 1000
 
-if len(df) == 0:
+if not rows:
     print(json.dumps({
-        "type": "error", "title": "No data after quality filters",
-        "message": "All rows were removed by quality filters. Check store hours and zone bounds.",
+        "type": "error", "title": "No Data",
+        "message": (
+            "No records found in dataset_records for this upload. "
+            "Run executeTransform first to populate the clean data layer."
+        ),
         "traceback": ""
     }))
     raise SystemExit
 
-# ── Aggregate to path level ────────────────────────────────────────────────────
-paths = (
-    df.groupby("target_id")
-    .agg(
-        start_time=("log_creation_time", "min"),
-        end_time=("log_creation_time", "max"),
-        point_count=("log_creation_time", "count"),
-        centroid_x=("x_m", "mean"),
-        centroid_y=("y_m", "mean"),
-        std_x=("x_m", "std"),
-        std_y=("y_m", "std"),
-        range_x=("x_m", lambda x: x.max() - x.min()),
-        range_y=("y_m", lambda x: x.max() - x.min()),
-        sensor_name=("sensor_name", "first"),
-    )
-    .reset_index()
-)
-paths["dwell_seconds"] = (paths["end_time"] - paths["start_time"]).dt.total_seconds()
-paths["std_x"] = paths["std_x"].fillna(0.0)
-paths["std_y"] = paths["std_y"].fillna(0.0)
-paths["start_hour"] = paths["start_time"].dt.hour
+paths = pd.DataFrame(rows)
 
-# Apply minimum point count
-paths = paths[paths["point_count"] >= MIN_POINTS].copy()
+# ── Validate required columns ──────────────────────────────────────────────────
+required = ["target_id", "dwell_seconds", "std_x", "std_y", "session_date", "sensor_name"]
+missing = [c for c in required if c not in paths.columns]
+if missing:
+    print(json.dumps({
+        "type": "error", "title": "Schema Mismatch",
+        "message": f"dataset_records missing expected columns: {missing}. Re-run transform.",
+        "traceback": ""
+    }))
+    raise SystemExit
 
-# ── is_fringe: centroid near detection zone edge ───────────────────────────────
-# Fringe = top 20% of y range or outermost 15% of x range
-y_fringe_threshold = Y_MIN + 0.80 * (Y_MAX - Y_MIN)
-x_fringe_threshold = 0.85 * X_MAX
-paths["is_fringe"] = (
-    (paths["centroid_y"] > y_fringe_threshold) |
-    (paths["centroid_x"].abs() > x_fringe_threshold)
-)
+paths["dwell_seconds"] = pd.to_numeric(paths["dwell_seconds"], errors="coerce").fillna(0.0)
+paths["std_x"] = pd.to_numeric(paths["std_x"], errors="coerce").fillna(0.0)
+paths["std_y"] = pd.to_numeric(paths["std_y"], errors="coerce").fillna(0.0)
 
 # ── Classify ───────────────────────────────────────────────────────────────────
-# Step 1: Ghost — short dwell AND near-zero movement
 is_ghost = (
     (paths["dwell_seconds"] < GHOST_DWELL_S) &
     (paths["std_x"] < GHOST_STD_M) &
     (paths["std_y"] < GHOST_STD_M)
 )
-
-# Step 2: Among non-ghosts, engaged vs passer-by by dwell threshold
 is_engaged = ~is_ghost & (paths["dwell_seconds"] >= ENGAGED_DWELL_S)
 is_passer_by = ~is_ghost & ~is_engaged
 
@@ -116,7 +104,7 @@ paths["classification"] = "passer-by"
 paths.loc[is_ghost, "classification"] = "ghost"
 paths.loc[is_engaged, "classification"] = "engaged"
 
-# ── Counts and engagement rate ─────────────────────────────────────────────────
+# ── Counts and rates ───────────────────────────────────────────────────────────
 counts = paths["classification"].value_counts()
 n_ghost = int(counts.get("ghost", 0))
 n_passer = int(counts.get("passer-by", 0))
@@ -127,7 +115,7 @@ n_total = len(paths)
 engagement_rate = round(100 * n_engaged / n_real, 1) if n_real > 0 else 0.0
 ghost_rate = round(100 * n_ghost / n_total, 1) if n_total > 0 else 0.0
 
-# ── Summary chart: Classification breakdown ────────────────────────────────────
+# ── Chart: Classification breakdown ───────────────────────────────────────────
 chart_id = f"plotly-{uuid.uuid4().hex[:8]}"
 
 traces = [{
@@ -180,16 +168,19 @@ chart_envelope = {
     ),
 }
 
-# ── Paths table (classified) ───────────────────────────────────────────────────
-output_cols = [
+# ── Table: Classified paths ────────────────────────────────────────────────────
+output_cols = [c for c in [
     "target_id", "classification", "dwell_seconds", "point_count",
     "centroid_x", "centroid_y", "std_x", "std_y", "range_x", "range_y",
-    "is_fringe", "start_hour", "sensor_name",
-]
+    "session_date", "sensor_name",
+] if c in paths.columns]
+
 paths_out = paths[output_cols].copy()
-paths_out["dwell_seconds"] = paths_out["dwell_seconds"].round(2)
+if "dwell_seconds" in paths_out.columns:
+    paths_out["dwell_seconds"] = paths_out["dwell_seconds"].round(2)
 for col in ["centroid_x", "centroid_y", "std_x", "std_y", "range_x", "range_y"]:
-    paths_out[col] = paths_out[col].round(3)
+    if col in paths_out.columns:
+        paths_out[col] = paths_out[col].round(3)
 paths_out = paths_out.sort_values("classification")
 
 table_envelope = {

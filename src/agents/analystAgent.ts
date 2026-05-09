@@ -11,9 +11,14 @@
 
 import { Agent } from "@mastra/core/agent";
 import type { CoreSystemMessage } from "@mastra/core/llm";
+import { Memory } from "@mastra/memory";
+import { InMemoryStore } from "@mastra/core/storage";
 import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { executeCodeTool } from "../tools/executeCode";
+import { executeTransformTool } from "../tools/executeTransform";
+import { executeAnalysisTool } from "../tools/executeAnalysis";
+import { queryDataTool } from "../tools/queryData";
 import { getSessionContextTool } from "../tools/getSessionContext";
 import { readKnowledgeTool } from "../tools/readKnowledge";
 import { writeBeliefTool } from "../tools/writeBelief";
@@ -22,6 +27,7 @@ import { saveDataDictionaryTool } from "../tools/saveDataDictionary";
 import { setSessionNameTool } from "../tools/setSessionName";
 import { fetchSensorDataTool } from "../tools/fetchSensorData";
 import { uploadDatasetTool } from "../tools/uploadDataset";
+import { updateSessionTool } from "../tools/updateSession";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -85,6 +91,20 @@ function buildInstructions(requestContext: any): CoreSystemMessage[] {
   return [staticInstructions, dynamic];
 }
 
+// ─── Memory ────────────────────────────────────────────────────────────────────
+// Configures Mastra Memory so conversation history persists within a server
+// process. InMemoryStore is sufficient for POC — key decisions (phase,
+// objective, dataset link) are durably stored in Postgres via updateSession.
+// Replace with a PgStore when moving to production.
+
+const agentMemory = new Memory({
+  storage: new InMemoryStore(),
+  options: {
+    lastMessages: 50,
+    semanticRecall: false,
+  },
+});
+
 // ─── Agent ─────────────────────────────────────────────────────────────────────
 
 export const analystAgent = new Agent({
@@ -92,13 +112,17 @@ export const analystAgent = new Agent({
   name: "analyst",
   instructions: ({ requestContext }) => buildInstructions(requestContext),
   model: anthropic("claude-sonnet-4-6"),
+  memory: agentMemory,
   requestContextSchema: z.object({
     sessionId: z.string().optional().describe("Current session ID"),
     orgId: z.string().optional().describe("Organization ID"),
     userId: z.string().optional().describe("Authenticated user ID"),
   }),
   tools: {
-    executeCode: executeCodeTool,
+    executeCode: executeCodeTool,       // deprecated — use executeAnalysis
+    executeTransform: executeTransformTool,
+    executeAnalysis: executeAnalysisTool,
+    queryData: queryDataTool,
     getSessionContext: getSessionContextTool,
     readKnowledge: readKnowledgeTool,
     writeBelief: writeBeliefTool,
@@ -107,5 +131,6 @@ export const analystAgent = new Agent({
     setSessionName: setSessionNameTool,
     fetchSensorData: fetchSensorDataTool,
     uploadDataset: uploadDatasetTool,
+    updateSession: updateSessionTool,
   },
 });

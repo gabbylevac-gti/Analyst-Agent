@@ -55,6 +55,7 @@ export const fetchSensorDataTool = createTool({
   outputSchema: z.object({
     success: z.boolean(),
     csvUrl: z.string().optional(),
+    rawUploadId: z.string().optional(),
     filename: z.string().optional(),
     rowCount: z.number().optional(),
     reportType: z.string().optional(),
@@ -156,18 +157,45 @@ export const fetchSensorDataTool = createTool({
       return { success: false, message: `Failed to upload CSV to storage: ${uploadError.message}` };
     }
 
-    // ── 6. Get public URL and update session ───────────────────────────────────
+    // ── 6. Get public URL ─────────────────────────────────────────────────────
     const { data: urlData } = supabase.storage.from("csv-uploads").getPublicUrl(storagePath);
     const csvUrl = urlData.publicUrl;
 
+    // ── 7. Write raw_data_uploads record ──────────────────────────────────────
+    const { data: rawUpload, error: rawUploadError } = await supabase
+      .from("raw_data_uploads")
+      .insert({
+        org_id: endPoint.org_id,
+        source_type: "api_fetch",
+        filename,
+        storage_path: storagePath,
+        storage_url: csvUrl,
+        row_count: rowCount,
+        session_id: sessionId,
+      })
+      .select("id")
+      .single();
+
+    const rawUploadId = rawUpload?.id as string | undefined;
+
+    if (rawUploadError) {
+      console.error("raw_data_uploads insert failed:", rawUploadError.message);
+    }
+
+    // ── 8. Update session with csvUrl + raw_upload_id ─────────────────────────
     await supabase
       .from("sessions")
-      .update({ csv_public_url: csvUrl, csv_storage_path: storagePath })
+      .update({
+        csv_public_url: csvUrl,
+        csv_storage_path: storagePath,
+        ...(rawUploadId ? { raw_upload_id: rawUploadId } : {}),
+      })
       .eq("id", sessionId);
 
     return {
       success: true,
       csvUrl,
+      rawUploadId,
       filename,
       rowCount,
       reportType,

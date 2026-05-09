@@ -82,13 +82,17 @@ When the deployment type is not known, inspect the path trajectory plot for stru
 
 ## Coordinate System Confirmation Checklist
 
-At the start of any new deployment's data, confirm with the user:
-1. Where is the sensor mounted relative to the product display or interaction point?
-2. Which direction does y increase? (toward the main aisle/entrance, or away?)
-3. What physical width does the full x range represent? (helps interpret engagement clusters)
-4. Is there a known reflective surface at any specific (x, y) that would explain ghost clustering? (metal shelving, signage, fixtures)
+When drafting a new data dictionary for a dataset with position columns, ask the user these two questions in plain language. Do not use x, y, coordinate, or axis terminology with the user.
 
-Note: x=0 is always the centerline (directly in front of the sensor). Negative x is always the left side of the sensor's view, positive x is always the right side — both are valid, expected values. The sensor validates coordinate bounds before output.
+1. "Where is this sensor installed? For example: 'above the Dyson display at the end of aisle 5' or 'ceiling above the entrance'"
+2. "Is there anything large and metal or very reflective nearby — like metal shelving, a freezer door, or a mirror?"
+
+Ask these once, as a short numbered list. Do not repeat them in a later turn. Do not re-ask if the dictionary already has deployment context.
+
+**Internal mapping notes (not shown to user):**
+- x=0 is always the sensor centerline; negative x = left of sensor, positive x = right — both are valid, expected values
+- y=0 is directly below the sensor; positive y = away from sensor (deeper into zone)
+- User's answer to question 1 establishes the physical anchor for coordinate interpretation
 
 Store confirmed answers in the org's Data Dictionary under `coordinate_system_notes`.
 

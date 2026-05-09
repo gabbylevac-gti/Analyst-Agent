@@ -22,18 +22,15 @@ Purpose:  Standardizes raw DR6000 paths data to the platform's clean layer.
               historical load and nightly campaign data sync
 
 Inputs ({{PLACEHOLDER}} tokens):
-  {{CSV_URL}}             URL of the raw CSV file (Supabase Storage or API response)
   {{STORE_OPEN_HOUR}}     First valid hour of day, inclusive (from Data Dictionary)
   {{STORE_CLOSE_HOUR}}    First invalid hour of day (from Data Dictionary)
   {{MIN_POINTS}}          Minimum readings per path (from Data Dictionary, default 2)
-  {{ORG_ID}}              Organization ID (passed through to output for Mastra write)
-  {{SOURCE_ID}}           data_sources.id for this sensor/dataset
-  {{DICTIONARY_ID}}       data_dictionaries.id for this org's DR6000 Data Dictionary
-  {{RAW_UPLOAD_ID}}       raw_data_uploads.id if CSV upload; empty string if API pull
 
-Output: multi envelope — transformation summary table + clean paths data + text summary
-        data.clean_paths: list of path-level records ready for dataset_records write
-        data.provenance: org_id, source_id, dictionary_id, raw_upload_id for the write
+Note: CSV_URL is not a parameter — the tool writes the CSV to /sandbox/upload.csv before running this code.
+
+Output: transform envelope — { type: "transform", rows: [...], summary: "..." }
+        rows: list of path-level records written to dataset_records by executeTransform
+        The tool reads this envelope and handles the Postgres write.
 """
 
 import pandas as pd
@@ -41,17 +38,13 @@ import numpy as np
 import json
 
 # ── Parameters ─────────────────────────────────────────────────────────────────
-CSV_URL = "{{CSV_URL}}"
 STORE_OPEN_HOUR = {{STORE_OPEN_HOUR}}
 STORE_CLOSE_HOUR = {{STORE_CLOSE_HOUR}}
 MIN_POINTS = {{MIN_POINTS}}
-ORG_ID = "{{ORG_ID}}"
-SOURCE_ID = "{{SOURCE_ID}}"
-DICTIONARY_ID = "{{DICTIONARY_ID}}"
-RAW_UPLOAD_ID = "{{RAW_UPLOAD_ID}}" or None
 
 # ── Load ───────────────────────────────────────────────────────────────────────
-df = pd.read_csv(CSV_URL, parse_dates=["log_creation_time"])
+# The executeTransform tool writes the raw CSV to /sandbox/upload.csv before running this code.
+df = pd.read_csv("/sandbox/upload.csv", parse_dates=["log_creation_time"])
 total_rows_raw = len(df)
 total_paths_raw = df["target_id"].nunique()
 
@@ -123,35 +116,7 @@ paths["dwell_seconds"] = paths["dwell_seconds"].round(2)
 
 date_range_str = f"{paths['session_date'].min()} to {paths['session_date'].max()}"
 
-# ── QR filter summary ──────────────────────────────────────────────────────────
-filter_summary = [
-    {
-        "Rule": "QR-1: Off-Hours",
-        "Threshold": f"hour < {STORE_OPEN_HOUR} or >= {STORE_CLOSE_HOUR}",
-        "Rows Removed": rows_off_hours,
-        "Rows % Removed": round(100 * rows_off_hours / total_rows_raw, 1),
-        "Paths Removed": paths_off_hours,
-        "Status": "Applied",
-    },
-    {
-        "Rule": "QR-2: Min Point Count",
-        "Threshold": f"point_count < {MIN_POINTS}",
-        "Rows Removed": rows_short,
-        "Rows % Removed": round(100 * rows_short / total_rows_raw, 1),
-        "Paths Removed": paths_short,
-        "Status": "Applied",
-    },
-    {
-        "Rule": "QR-3: Ghost Filter",
-        "Threshold": "deployment-specific — applied at analysis time",
-        "Rows Removed": 0,
-        "Rows % Removed": 0.0,
-        "Paths Removed": 0,
-        "Status": "Deferred to analysis — confirm thresholds in Data Dictionary first",
-    },
-]
-
-# ── Clean paths output (for dataset_records write) ────────────────────────────
+# ── Clean paths for dataset_records ───────────────────────────────────────────
 clean_paths = paths[[
     "target_id", "session_date", "start_time", "end_time",
     "dwell_seconds", "point_count",
@@ -161,78 +126,17 @@ clean_paths = paths[[
 clean_paths["start_time"] = clean_paths["start_time"].astype(str)
 clean_paths["end_time"] = clean_paths["end_time"].astype(str)
 
-provenance = {
-    "org_id": ORG_ID,
-    "source_id": SOURCE_ID,
-    "dictionary_id": DICTIONARY_ID,
-    "raw_upload_id": RAW_UPLOAD_ID if RAW_UPLOAD_ID else None,
-}
-
-# ── Summary envelope ───────────────────────────────────────────────────────────
-summary_table_envelope = {
-    "type": "table",
-    "title": f"Transformation Summary — {paths_retained} clean paths",
-    "data": filter_summary,
-    "columns": ["Rule", "Threshold", "Rows Removed", "Rows % Removed", "Paths Removed", "Status"],
-    "summary": (
-        f"Transformation applied to {total_rows_raw:,} rows / {total_paths_raw} paths. "
-        f"QR-1 removed {paths_off_hours} paths (off-hours). "
-        f"QR-2 removed {paths_short} paths (< {MIN_POINTS} points). "
-        f"{paths_retained} clean paths retained ({date_range_str})."
-    ),
-}
-
-text_content = f"""## Transformation Summary
-
-**Period:** {date_range_str}
-**Input:** {total_rows_raw:,} raw rows | {total_paths_raw} paths
-
-### Quality Rules Applied
-| Rule | Paths Removed | Notes |
-|------|--------------|-------|
-| QR-1 Off-Hours | {paths_off_hours} | Outside {STORE_OPEN_HOUR}:00–{STORE_CLOSE_HOUR}:00 |
-| QR-2 Min Points | {paths_short} | Fewer than {MIN_POINTS} readings |
-
-### Output
-- **Clean paths written:** {paths_retained} path records
-- **Date range:** {date_range_str}
-
-### Not Applied Here
-- **QR-3 Ghost Filter** — deployment-specific. Confirm GHOST_DWELL_S and GHOST_STD_M
-  in the Data Dictionary (run `quality-check-sensor-v1.py` + `path-trajectory-plot.py`
-  if not yet done), then apply at analysis time via `path-classification-v1.py`.
-
-### Next Steps
-1. Review this summary and confirm the clean path count looks reasonable
-2. Approve → Mastra tool writes {paths_retained} records to `dataset_records`
-3. Run `path-classification-v1.py` or `engagement-metrics-v1.py` for analysis
-"""
-
-text_envelope = {
-    "type": "text",
-    "title": "Transformation Summary",
-    "content": text_content,
-    "summary": (
-        f"Transformation complete. {paths_retained} of {total_paths_raw} paths retained "
-        f"after QR-1 and QR-2. QR-3 ghost filter deferred to analysis time. "
-        f"Period: {date_range_str}."
-    ),
-}
-
-# ── Output ─────────────────────────────────────────────────────────────────────
+# ── Output: transform contract ─────────────────────────────────────────────────
+# executeTransform reads this envelope and writes rows to dataset_records.
+# The summary becomes the agent's confirmation message after the write.
 print(json.dumps({
-    "type": "multi",
-    "title": f"DR6000 Transformation — {paths_retained} clean paths",
-    "artifacts": [summary_table_envelope, text_envelope],
-    "data": {
-        "clean_paths": clean_paths.to_dict(orient="records"),
-        "provenance": provenance,
-        "paths_retained": paths_retained,
-        "date_range": date_range_str,
-    },
+    "type": "transform",
+    "rows": clean_paths.to_dict(orient="records"),
     "summary": (
-        f"Transformation: {paths_retained} clean path records from {total_paths_raw} raw paths "
-        f"({date_range_str}). QR-1 removed {paths_off_hours} off-hours paths; "
-        f"QR-2 removed {paths_short} short paths. Ghost filter deferred to analysis."
+        f"Transformation: {paths_retained:,} clean path records from {total_paths_raw:,} raw paths "
+        f"({date_range_str}). "
+        f"QR-1 removed {paths_off_hours} off-hours paths. "
+        f"QR-2 removed {paths_short} paths under {MIN_POINTS} readings. "
+        f"Ghost filter (QR-3) deferred to analysis time."
     ),
 }))
