@@ -86,6 +86,7 @@ const artifactSchema = z.object({
   content: z.string().optional(),
   columns: z.array(z.string()).optional(),
   artifacts: z.array(z.unknown()).optional(),
+  insights: z.array(z.string()).optional(),
   summary: z.string(),
   message: z.string().optional(),
   traceback: z.string().optional(),
