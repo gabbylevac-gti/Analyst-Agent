@@ -29,8 +29,8 @@ export const fetchSensorDataTool = createTool({
     "Fetch radar sensor data from the DR6000 API. " +
     "Use this when the user message contains an [API_CONTEXT] block. " +
     "Extract end_point_id, range_start, and range_end from that block and pass them here. " +
-    "Uploads the resulting CSV to Supabase Storage and updates sessions.csv_public_url. " +
-    "After this tool succeeds, use the returned csvUrl in all executeCode calls.",
+    "Uploads the resulting CSV to Supabase Storage, writes a raw_data_uploads record, and updates sessions.raw_upload_id. " +
+    "After this tool succeeds, call executeTransform with the returned rawUploadId to populate dataset_records.",
   inputSchema: z.object({
     sessionId: z.string().describe("Current session ID — used to store the result"),
     endPointId: z
@@ -176,11 +176,14 @@ export const fetchSensorDataTool = createTool({
       .select("id")
       .single();
 
-    const rawUploadId = rawUpload?.id as string | undefined;
-
-    if (rawUploadError) {
-      console.error("raw_data_uploads insert failed:", rawUploadError.message);
+    if (rawUploadError || !rawUpload) {
+      return {
+        success: false,
+        message: `CSV fetched and uploaded successfully, but failed to write raw_data_uploads record: ${rawUploadError?.message ?? "no row returned"}. Ensure the sessionId exists in the sessions table (use a real app session, not a Studio-generated ID).`,
+      };
     }
+
+    const rawUploadId = rawUpload.id as string;
 
     // ── 8. Update session with csvUrl + raw_upload_id ─────────────────────────
     await supabase
@@ -188,7 +191,7 @@ export const fetchSensorDataTool = createTool({
       .update({
         csv_public_url: csvUrl,
         csv_storage_path: storagePath,
-        ...(rawUploadId ? { raw_upload_id: rawUploadId } : {}),
+        raw_upload_id: rawUploadId,
       })
       .eq("id", sessionId);
 
