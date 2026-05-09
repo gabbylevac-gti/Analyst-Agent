@@ -19,18 +19,20 @@ Trigger automatically if the user has been inactive for more than 30 minutes —
 
 ## What a Good Summary Contains
 
-A session summary is **not** a transcript. It is a distillation of the decisions, findings, and open questions that matter to the next session. Aim for 200–400 words.
+A session summary is **not** a transcript. It is a factual record of what happened — what data was loaded, what questions were asked, and what was found. It does not direct future sessions.
+
+Aim for 150–300 words. Write only facts. Do not use directives like "MUST", "immediately", "before any analysis", "the next session should". Future sessions set their own direction.
 
 ### Required sections:
 
-**Objective**
-What was the user trying to accomplish in this session? One sentence.
-
 **Dataset**
-Filename, row count, time window analyzed, sensor(s) in scope.
+Filename or source, row count, time window, sensor(s) in scope, `rawUploadId` if available.
 
-**Key Findings**
-The 3–5 most important things discovered. Each finding includes:
+**What Was Analyzed**
+The specific questions asked this session and what tools were called. List as 3–5 bullet points — one per question or analysis thread.
+
+**Take-Aways**
+The 3–5 most important findings produced. Each includes:
 - The observation (specific, with numbers)
 - Whether it confirmed, contradicted, or extended an existing belief
 - Confidence level
@@ -39,16 +41,10 @@ The 3–5 most important things discovered. Each finding includes:
 Any threshold decisions, classification rules, or analytical choices the user accepted. Future sessions should not re-litigate these unless the user explicitly revisits them.
 
 **Approved Beliefs (this session)**
-List of belief IDs or names that were approved and written to Supabase during this session. Future sessions can reference these by ID.
+List of belief IDs or names approved and written to Supabase during this session.
 
 **Approved Templates (this session)**
 List of template names saved during this session.
-
-**Open Questions**
-What was the user's last line of inquiry? What would naturally come next? These become the starting point for the next session.
-
-**Recommended Next Step**
-One concrete suggestion for the next session, framed as the agent's recommendation.
 
 ---
 
@@ -67,25 +63,24 @@ Review the current session's messages and artifact history. Identify:
 
 Write the summary in the structure above. Be specific — reference actual values, actual template names, actual belief IDs. Vague summaries ("we looked at the data") compound nothing.
 
-**Example opening for a session summary:**
-> **Objective**: Identify reliable thresholds for ghost path classification using dwell time and positional variance.
+**Example session summary:**
+> **Dataset**: CT1-Dyson-Path-May1.csv | 2,847 rows | April 6–10, 2026 | sensor radar-001 | rawUploadId: `abc123`
 >
-> **Dataset**: CT1-Dyson-Path-May1.csv | 2,847 rows | April 6–10, 2026 | sensor radar-001
+> **What Was Analyzed**:
+> - Ghost rate and path classification (dwell + positional variance)
+> - Spatial clustering of ghost vs. engaged paths
+> - Dwell time distribution for engaged paths
 >
-> **Key Findings**:
-> 1. 61% of paths have dwell < 3s (consistent with ghost hypothesis). These cluster at x ≈ -1.0, y ≈ 1.9 — the sensor's detection fringe. Confidence: 0.78.
-> 2. 4 paths with clear linear movement across x range (−1.1 to 0.9m) are strong engaged candidates. Dwell 22–47s.
-> 3. positional_std < 0.15m successfully separates stationary detections from mobile paths in this dataset.
+> **Take-Aways**:
+> 1. 61% of paths have dwell < 3s — consistent with ghost hypothesis. These cluster at x ≈ -1.0, y ≈ 1.9 (sensor fringe). Confidence: 0.78.
+> 2. 4 paths show clear cross-display movement (x range −1.1 to 0.9m). Dwell 22–47s. Confirmed engaged.
+> 3. positional_std < 0.15m separates stationary from mobile detections in this dataset.
 >
-> **Decisions Made**: 3-second dwell threshold accepted as the primary ghost filter. Will refine with positional_std in next session.
+> **Decisions Made**: 3-second dwell threshold accepted as the primary ghost filter.
 >
 > **Approved Beliefs**: `belief_ghost_dwell_threshold_v1` (confidence 0.78)
 >
 > **Approved Templates**: `path-aggregation-v1`, `path-trajectory-plot-v1`
->
-> **Open Questions**: Does the 3s threshold hold for sensor radar-002? Are the fringe-clustered paths all ghosts or are some slow approaches?
->
-> **Next Step**: Upload radar-002 data and run the same path-aggregation template to compare ghost rates across sensors.
 
 ### Step 3: Write to Supabase
 
@@ -94,7 +89,7 @@ Call `writeBelief` with `type: "session_summary"` and the structured summary tex
 ### Step 4: Confirm to the user
 
 If the user is still present:
-> "Session saved. I've recorded our findings and open questions — next time we pick up, I'll start from where we left off. Your next step recommendation: [one sentence]."
+> "Session saved. I've recorded what we analyzed and the take-aways — next session will have full context on what we found today."
 
 If the session ended without the user explicitly wrapping up (background summarization), no confirmation needed.
 

@@ -83,9 +83,14 @@ knowledge/               ← .md files: brand-identity, retail-operations, data-
 ```
 
 ## Persistence Model
-- **Postgres (structured):** campaigns, campaign_designs, performance_levers, take_aways, hypotheses, experiments, beliefs, belief_relationships, kpi_targets, code_templates, notebooks, notebook_steps, audit_log
+- **Postgres (structured):** campaigns, campaign_designs, knowledge_beliefs, take_aways, analysis_artifacts, hypotheses, experiments, beliefs, belief_relationships, kpi_targets, code_templates, notebooks, notebook_steps, audit_log
 - **.md (knowledge graph):** domain knowledge, brand identity, integration quirks — derivative of Postgres, optimized for agent context reading
 - **Rule:** Postgres is source of truth. Write to Postgres first, write to .md after approval.
+
+### Take-Away and Belief model (POC)
+A **Take-Away** is the evidence package supporting a belief: `{ belief_id FK, artifact_id FK, insights[], actions[] }`. A **Belief** (`knowledge_beliefs.content`) is the durable claim. Approving a Take-Away confirms both records. Multiple Take-Aways across sessions can corroborate the same belief, increasing its confidence.
+
+POC uses `knowledge_beliefs` (analyst agent table). Full-vision uses `beliefs` (richer, with experiment chains). These will converge post-POC.
 
 ## Rules
 - Tools are single-responsibility — one tool, one job

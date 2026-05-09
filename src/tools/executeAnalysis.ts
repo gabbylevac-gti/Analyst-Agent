@@ -201,6 +201,9 @@ export const executeAnalysisTool = createTool({
               : null,
             data: (envelope as Record<string, unknown>).data ?? {},
             summary: envelope.summary,
+            insights: Array.isArray((envelope as Record<string, unknown>).insights)
+              ? (envelope as Record<string, unknown>).insights as string[]
+              : [],
             input_params: context.params ?? {},
           })
           .select("id")

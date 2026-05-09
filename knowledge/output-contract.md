@@ -130,17 +130,29 @@ The agent reads this and debugs before surfacing to the user.
 
 ---
 
-## Artifact as Take-Away Draft
+## Take-Away — Formal Definition
 
-In the `/chat` and `/notebook` playbooks, every artifact that answers an analysis question is simultaneously the **Take-Away draft**. There is no separate card. The artifact envelope + the agent's response together form the approvable unit.
+A **Take-Away** is the primary output of an analysis session. It has 4 components:
+
+```
+Take-Away = {
+  belief:     FK → knowledge_beliefs   // 1–2 sentence claim (agent text before the card)
+  evidence:   FK → analysis_artifacts  // the chart artifact
+  insights:   string[]                 // 2–5 bullets rendered inside the chart card
+  actions:    string[]                 // 0–3 recommended next questions (agent text after)
+}
+```
+
+- `belief` — the durable learning: the agent's direct answer to the analysis question. Stored in `knowledge_beliefs`. When a Take-Away is approved, the belief enters the compound learning loop.
+- `evidence` — the chart that visually supports the belief. Stored in `analysis_artifacts`.
+- `insights` — specific numerical observations from the data. Rendered inside the TakeAwayCard below the chart. Stored in `analysis_artifacts.insights` and `take_aways.insights`.
+- `actions` — optional agent text after the card (0–3 recommended follow-up questions).
 
 **What this means for the Python code:**
 
-The `summary` field is the agent's primary interpretation input — it feeds the agent's Insights step (written as agent text after the charts). Write it as if it will be read aloud to someone who cannot see the chart.
+The `insights` field is **required** for any envelope that is meant as a Take-Away. Write 2–5 items — each a 1-sentence claim with a specific number. These render directly in the card and are stored with the artifact.
 
-**Optional `insights` field (chart and multi envelopes only) — reference data for the agent, not rendered in the frontend:**
-
-Analysis code may include a pre-computed `insights` array to assist the agent in drafting the Insights step (2–5 bullets written as agent text after the last chart). The frontend does NOT render this field — it is agent-facing only. If present, the agent uses it as a starting point; if absent, the agent derives insights from `data`.
+**`insights` field (chart and multi envelopes — required for Take-Away outputs):**
 
 ```json
 {
@@ -158,25 +170,25 @@ Analysis code may include a pre-computed `insights` array to assist the agent in
 ```
 
 - Each insight is a 1-sentence claim with a supporting number.
-- 2–5 insights maximum.
+- 2–5 insights required for Take-Away envelopes.
 - Insights must reference values from `data` — no fabrication.
-- If an insight would require the agent to re-run analysis, omit it and let the agent derive it.
 
 **Take-Away response lifecycle:**
 
 ```
 Agent response turn
-  ├── Take-Away: 1-2 sentences with real numbers (from queryData output)
-  ├── Evidence: 1-4 executeAnalysis calls — one chart/table card each
-  ├── Insights: 2-5 bullet points as agent text after the last chart
-  ├── Actions: 1-3 next questions/actions (only if clearly warranted)
-  └── Take-Away draft card (pending):
-        headline = chart title
-        evidence = summary + key insight values
-        [Approve as Take-Away] [Edit] [Discard]
+  ├── Belief: 1–2 sentences with real numbers (from queryData — agent text above card)
+  ├── Evidence: 1–4 executeAnalysis calls
+  │     └── TakeAwayCard renders: chart + insights bullets (from envelope.insights)
+  ├── Actions: 0–3 next questions/actions (agent text, only if warranted)
+  └── Take-Away record (pending approval — M2):
+        take_aways.belief_id → knowledge_beliefs (the belief claim)
+        take_aways.artifact_id → analysis_artifacts (the chart)
+        take_aways.insights → string[] (same as envelope.insights)
+        take_aways.actions → string[]
 ```
 
-Approved Take-Aways are written to the `knowledge_beliefs` table via `writeBelief`. The artifact HTML is NOT stored — only the headline, summary, and insights are stored as the belief content.
+On approval: `take_aways.status = 'approved'`, `knowledge_beliefs.status = 'approved'`, belief enters the compound learning loop.
 
 ---
 
