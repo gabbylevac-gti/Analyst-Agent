@@ -9,8 +9,9 @@
  *   Stage 1 (executeTransform) — Raw → Clean:  raw CSV → dataset_records
  *   Stage 2 (this tool)        — Clean → Enriched: dataset_records → analysis_artifacts
  *
- * Returns the artifact envelope, its persisted ID, and the code that ran.
- * The code field is required for M2 Direct Control mode display.
+ * Returns a compact envelope (type/title/summary/insights only), the artifact ID for
+ * frontend rendering, and the exit code. html/data are stored in analysis_artifacts
+ * and fetched by the frontend directly — not returned to the agent to keep token usage low.
  *
  * Analysis code pattern:
  *   import psycopg2, os, json
@@ -53,6 +54,22 @@ function truncateTrace(trace: unknown): unknown {
     }
   }
   return result;
+}
+
+// Strip html and data from the agent-facing envelope — these are saved to analysis_artifacts
+// and fetched by the frontend via artifactId, so the agent never needs to see them.
+function stripHeavyFields(envelope: z.infer<typeof artifactSchema>): z.infer<typeof artifactSchema> {
+  const { html: _html, data: _data, ...rest } = envelope as z.infer<typeof artifactSchema> & { html?: unknown; data?: unknown };
+  if (rest.type === "multi" && Array.isArray(rest.artifacts)) {
+    return {
+      ...rest,
+      artifacts: rest.artifacts.map(a => {
+        const { html: _h, data: _d, ...r } = a as Record<string, unknown>;
+        return r;
+      }),
+    } as z.infer<typeof artifactSchema>;
+  }
+  return rest as z.infer<typeof artifactSchema>;
 }
 
 function truncateEnvelopeData(envelope: z.infer<typeof artifactSchema>): z.infer<typeof artifactSchema> {
@@ -120,9 +137,6 @@ export const executeAnalysisTool = createTool({
   outputSchema: z.object({
     envelope: artifactSchema,
     artifactId: z.string().optional(),
-    code: z.string(),
-    stdout: z.string(),
-    stderr: z.string(),
     exitCode: z.number(),
     error: z.string().optional(),
   }),
@@ -214,11 +228,8 @@ export const executeAnalysisTool = createTool({
       }
 
       return {
-        envelope: truncatedEnvelope,
+        envelope: stripHeavyFields(truncatedEnvelope),
         artifactId,
-        code,
-        stdout,
-        stderr,
         exitCode,
       };
     } catch (err) {
@@ -229,9 +240,6 @@ export const executeAnalysisTool = createTool({
           summary: "The E2B sandbox threw an exception before execution completed.",
           message: (err as Error).message,
         },
-        code,
-        stdout: "",
-        stderr: "",
         exitCode: 1,
         error: (err as Error).message,
       };
