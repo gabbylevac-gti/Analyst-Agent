@@ -14,8 +14,7 @@ Inputs ({{PLACEHOLDER}} tokens — agent fills these before calling executeAnaly
   {{MIN_POINTS}}      Minimum point_count to include a path (e.g., 2)
 
 Runtime env vars (injected by executeAnalysis tool — do not modify):
-  SUPABASE_URL     Supabase project URL
-  SUPABASE_KEY     Supabase service role key
+  DB_URL           Postgres connection string (session pooler, IPv4)
   RAW_UPLOAD_ID    raw_data_uploads.id to filter dataset_records
 
 Output: table envelope with one row per path (target_id).
@@ -24,7 +23,7 @@ Output: table envelope with one row per path (target_id).
 import json
 import os
 
-import requests
+import psycopg2
 
 import numpy as np
 import pandas as pd
@@ -37,25 +36,16 @@ MIN_POINTS = {{MIN_POINTS}}
 
 RAW_UPLOAD_ID = os.environ["RAW_UPLOAD_ID"]
 
-# ── Load from dataset_records (Supabase REST API) ──────────────────────────────
-_headers = {
-    "apikey": os.environ["SUPABASE_KEY"],
-    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}",
-}
-rows, _offset = [], 0
-while True:
-    _resp = requests.get(
-        f"{os.environ['SUPABASE_URL']}/rest/v1/dataset_records",
-        headers={**_headers, "Range": f"{_offset}-{_offset+999}"},
-        params={"raw_upload_id": f"eq.{RAW_UPLOAD_ID}", "select": "data"},
-    )
-    _batch = _resp.json()
-    if not _batch:
-        break
-    rows.extend(b["data"] for b in _batch)
-    if len(_batch) < 1000:
-        break
-    _offset += 1000
+# ── Load from dataset_records via Postgres ─────────────────────────────────────
+conn = psycopg2.connect(os.environ["DB_URL"])
+cur = conn.cursor()
+cur.execute(
+    "SELECT data FROM dataset_records WHERE raw_upload_id = %s",
+    (RAW_UPLOAD_ID,),
+)
+rows = [r[0] for r in cur.fetchall()]
+cur.close()
+conn.close()
 
 if not rows:
     print(json.dumps({

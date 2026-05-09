@@ -134,16 +134,18 @@ export const executeAnalysisTool = createTool({
     try {
       // ── Pre-install analysis libraries ────────────────────────────────────
       await sandbox.runCode(
-        "import subprocess; subprocess.run(['pip', 'install', 'plotly', 'pandas', 'numpy', 'scipy', 'requests', '--quiet', '--root-user-action=ignore'], check=True, capture_output=True)",
+        "import subprocess; subprocess.run(['pip', 'install', 'plotly', 'pandas', 'numpy', 'scipy', 'psycopg2-binary', '--quiet', '--root-user-action=ignore'], check=True, capture_output=True)",
         { language: "python" }
       );
 
-      // ── Run analysis code with Supabase REST credentials injected ─────────
+      // ── Build Postgres connection URL and run analysis code ───────────────
+      const dbPassword = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD ?? "");
+      const dbUrl = `postgresql://postgres.ftshahsqtkxxjmpsmyhp:${dbPassword}@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require`;
+
       const exec = await sandbox.runCode(code, {
         language: "python",
         envs: {
-          SUPABASE_URL: process.env.SUPABASE_URL ?? "",
-          SUPABASE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+          DB_URL: dbUrl,
           RAW_UPLOAD_ID: rawUploadId,
         },
       });

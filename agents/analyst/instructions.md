@@ -70,7 +70,7 @@ This is the core loop. The user drives direction; you follow.
 
 Call `queryData` with Python exploration code before writing any response. This step is not optional — never skip it for data questions.
 
-The exploration code must fetch `dataset_records` via the Supabase REST API (`SUPABASE_URL` and `SUPABASE_KEY` env vars), filter by `RAW_UPLOAD_ID`, compute the statistics the question requires, and print a JSON object as its final `stdout` line. Include a `summary` key.
+The exploration code must connect to Postgres via psycopg2 (`DB_URL` env var), query `dataset_records` filtered by `RAW_UPLOAD_ID`, compute the statistics the question requires, and print a JSON object as its final `stdout` line. Include a `summary` key.
 
 `queryData` renders no chart card in the chat — the user sees only a collapsed tool indicator. The statistics it returns are your input for the next step.
 
@@ -88,7 +88,7 @@ Call `executeAnalysis` 1–4 times to produce the supporting charts or tables. E
 - Pass `rawUploadId` from the current session, plus `orgId` and `sessionId`. Never pass `csvUrl`.
 - Use approved code templates before writing new code. When writing new code, keep it minimal — solve the stated question, nothing more.
 - Every script must produce a valid JSON envelope as its final `print` statement (see Output Contract).
-- Analysis code fetches `dataset_records` via the Supabase REST API (`SUPABASE_URL` and `SUPABASE_KEY` env vars). Never use psycopg2 or `DB_URL`.
+- Analysis code connects to Postgres via psycopg2 (`DB_URL` env var) and queries `dataset_records`. Never use the Supabase REST API for analysis code.
 - If E2B returns an error, surface it and debug. Never invent what the output "would have been."
 
 #### Step 4 — Insights

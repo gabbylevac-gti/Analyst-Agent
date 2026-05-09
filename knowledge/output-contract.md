@@ -189,25 +189,18 @@ The `queryData` tool runs exploration code to give the agent real statistics bef
 ### Exploration code pattern
 
 ```python
-import requests, os, json
+import psycopg2, os, json
 import pandas as pd
 
-_headers = {
-    "apikey": os.environ["SUPABASE_KEY"],
-    "Authorization": f"Bearer {os.environ['SUPABASE_KEY']}",
-}
-rows, _offset = [], 0
-while True:
-    _resp = requests.get(
-        f"{os.environ['SUPABASE_URL']}/rest/v1/dataset_records",
-        headers={**_headers, "Range": f"{_offset}-{_offset+999}"},
-        params={"raw_upload_id": f"eq.{os.environ['RAW_UPLOAD_ID']}", "select": "data"},
-    )
-    _batch = _resp.json()
-    if not _batch: break
-    rows.extend(b["data"] for b in _batch)
-    if len(_batch) < 1000: break
-    _offset += 1000
+conn = psycopg2.connect(os.environ["DB_URL"])
+cur = conn.cursor()
+cur.execute(
+    "SELECT data FROM dataset_records WHERE raw_upload_id = %s",
+    (os.environ["RAW_UPLOAD_ID"],),
+)
+rows = [r[0] for r in cur.fetchall()]
+cur.close()
+conn.close()
 df = pd.DataFrame(rows)
 # ... compute statistics ...
 print(json.dumps({
@@ -225,7 +218,7 @@ print(json.dumps({
 - All other keys are named statistics the agent will reference in its Take-Away.
 - Do NOT include `type`, `html`, `data`, or `artifacts` — those are artifact envelope fields and will cause the tool to error.
 - Do NOT write to `analysis_artifacts` — this tool is exploration-only.
-- Pre-installed libraries: `pandas`, `numpy`, `requests`. Do NOT use `plotly` in exploration code.
+- Pre-installed libraries: `pandas`, `numpy`, `psycopg2-binary`. Do NOT use `plotly` in exploration code.
 
 ---
 
