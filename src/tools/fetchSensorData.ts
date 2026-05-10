@@ -56,6 +56,7 @@ export const fetchSensorDataTool = createTool({
     success: z.boolean(),
     csvUrl: z.string().optional(),
     rawUploadId: z.string().optional(),
+    integrationId: z.string().optional(),
     filename: z.string().optional(),
     rowCount: z.number().optional(),
     reportType: z.string().optional(),
@@ -172,6 +173,7 @@ export const fetchSensorDataTool = createTool({
         storage_url: csvUrl,
         row_count: rowCount,
         session_id: sessionId,
+        integration_type: "dr6000-radar",
       })
       .select("id")
       .single();
@@ -199,6 +201,7 @@ export const fetchSensorDataTool = createTool({
       success: true,
       csvUrl,
       rawUploadId,
+      integrationId: "dr6000-radar",
       filename,
       rowCount,
       reportType,

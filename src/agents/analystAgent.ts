@@ -29,6 +29,7 @@ import { fetchSensorDataTool } from "../tools/fetchSensorData";
 import { uploadDatasetTool } from "../tools/uploadDataset";
 import { updateSessionTool } from "../tools/updateSession";
 import { requestContextCardTool } from "../tools/requestContextCard";
+import { getTransformPipelineTool } from "../tools/getTransformPipeline";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -136,5 +137,6 @@ export const analystAgent = new Agent({
     uploadDataset: uploadDatasetTool,
     updateSession: updateSessionTool,
     requestContextCard: requestContextCardTool,
+    getTransformPipeline: getTransformPipelineTool,
   },
 });

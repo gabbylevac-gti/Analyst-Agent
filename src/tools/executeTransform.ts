@@ -35,10 +35,10 @@ export const executeTransformTool = createTool({
   id: "execute-transform",
   description:
     "Run an approved transformation template against raw ingested data. " +
-    "Reads the raw CSV from Supabase Storage, runs transformation code in E2B, " +
-    "and writes the resulting clean path-level rows to dataset_records. " +
-    "Call this after uploadDataset or fetchSensorData succeeds — before any executeAnalysis calls. " +
-    "The transform template must print { type: 'transform', rows: [...], summary: '...' } as its final output.",
+    "Fetches the template code from code_templates by templateId, fills {{PLACEHOLDER}} " +
+    "tokens from params, runs it in E2B, and writes the resulting clean path-level rows " +
+    "to dataset_records. Call this after getTransformPipeline resolves the templateId and " +
+    "all required params. Never pass raw code — use templateId only.",
   inputSchema: z.object({
     rawUploadId: z.string().describe("raw_data_uploads.id returned by uploadDataset or fetchSensorData"),
     datasetId: z
@@ -46,8 +46,13 @@ export const executeTransformTool = createTool({
       .optional()
       .describe("datasets.id (approved data dictionary) to link clean records to. Pass if available."),
     orgId: z.string().describe("Organization ID"),
-    code: z.string().describe("Approved transformation Python code. Must print { type: 'transform', rows: [...], summary: '...' }"),
-    params: z.record(z.unknown()).optional().describe("Template parameters (store hours, MIN_POINTS, etc.)"),
+    templateId: z
+      .string()
+      .describe("code_templates.id returned by getTransformPipeline. The tool fetches the code itself."),
+    params: z
+      .record(z.unknown())
+      .optional()
+      .describe("Resolved parameter values keyed by placeholder name (e.g. { STORE_OPEN_HOUR: 8, MIN_POINTS: 2 }). All required params must be present."),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -56,10 +61,61 @@ export const executeTransformTool = createTool({
     error: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, datasetId, orgId, code } = context;
+    const { rawUploadId, datasetId, orgId, templateId, params } = context;
     const supabase = getSupabase();
 
-    // ── 1. Look up storage_url from raw_data_uploads ──────────────────────────
+    // ── 1. Fetch template code from code_templates ────────────────────────────
+    const { data: template, error: templateError } = await supabase
+      .from("code_templates")
+      .select("code, parameters, name")
+      .eq("id", templateId)
+      .single();
+
+    if (templateError || !template) {
+      return {
+        success: false,
+        summary: `Template ${templateId} not found: ${templateError?.message ?? "not found"}`,
+        error: templateError?.message ?? "not found",
+      };
+    }
+
+    // Validate required params before executing
+    if (template.parameters && Array.isArray(template.parameters)) {
+      const missingRequired: string[] = [];
+      for (const p of template.parameters as Array<{ name: string; required: boolean }>) {
+        if (p.required && (params?.[p.name] === undefined || params?.[p.name] === null || params?.[p.name] === "")) {
+          missingRequired.push(p.name);
+        }
+      }
+      if (missingRequired.length > 0) {
+        return {
+          success: false,
+          summary: `Missing required parameters: ${missingRequired.join(", ")}. Resolve these before calling executeTransform.`,
+          error: `Missing required params: ${missingRequired.join(", ")}`,
+        };
+      }
+    }
+
+    // Fill {{PLACEHOLDER}} tokens from params
+    let code: string = template.code as string;
+    if (params) {
+      code = code.replace(/\{\{(\w+)\}\}/g, (_, key: string) => {
+        const val = params[key];
+        return val !== undefined && val !== null ? String(val) : `{{${key}}}`;
+      });
+    }
+
+    // Verify no unfilled placeholders remain (guards against missing optional params with no default)
+    const unfilled = code.match(/\{\{\w+\}\}/g);
+    if (unfilled) {
+      return {
+        success: false,
+        summary: `Unfilled placeholders in template after param resolution: ${[...new Set(unfilled)].join(", ")}`,
+        error: `Unfilled placeholders: ${[...new Set(unfilled)].join(", ")}`,
+      };
+    }
+
+    // ── 2. Look up storage_url from raw_data_uploads ──────────────────────────
     const { data: upload, error: uploadError } = await supabase
       .from("raw_data_uploads")
       .select("storage_url, filename")
@@ -106,9 +162,7 @@ export const executeTransformTool = createTool({
         { language: "python" }
       );
 
-      // ── 4. Run the transformation code ────────────────────────────────────
-      // SUPABASE_URL/KEY injected as safety net — correct templates don't use them,
-      // but prevents KeyError if agent-written code tries REST API access.
+      // ── 4. Run the filled template code ───────────────────────────────────
       const exec = await sandbox.runCode(code, {
         language: "python",
         envs: {

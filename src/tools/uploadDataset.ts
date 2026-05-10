@@ -49,24 +49,42 @@ function buildColumnSignature(headers: string[]): string {
   return headers.slice().sort().join(",");
 }
 
+// DR6000 paths CSV is identified by the presence of these three columns.
+function inferIntegrationId(headers: string[]): string | null {
+  if (
+    headers.includes("target_id") &&
+    headers.includes("x_m") &&
+    headers.includes("y_m")
+  ) {
+    return "dr6000-radar";
+  }
+  return null;
+}
+
 export const uploadDatasetTool = createTool({
   id: "upload-dataset",
   description:
     "Register an uploaded CSV as a dataset record. " +
     "Call this after the user uploads a CSV file (csvUrl will be present in getSessionContext). " +
     "This tool profiles the CSV (columns, row count) and writes a record to the datasets table. " +
-    "Returns a datasetId that links this dataset to the session. " +
-    "After this succeeds, use the returned csvUrl in all executeCode calls.",
+    "Returns a datasetId and integrationId that the agent uses to call getTransformPipeline. " +
+    "After this succeeds, call getTransformPipeline(integrationId) to determine the transform template.",
   inputSchema: z.object({
     sessionId: z.string().describe("Current session ID."),
     orgId: z.string().describe("Organization ID from session context."),
     csvUrl: z.string().describe("Public URL of the CSV in Supabase Storage (from getSessionContext)."),
     filename: z.string().optional().describe("Original filename. Inferred from URL if omitted."),
+    integrationId: z
+      .string()
+      .optional()
+      .describe("Override integration type (e.g. 'dr6000-radar'). If omitted, inferred from CSV column names."),
   }),
   outputSchema: z.object({
     success: z.boolean(),
     datasetId: z.string().optional(),
     rawUploadId: z.string().optional(),
+    integrationId: z.string().nullable().optional(),
+    integrationTypeInferred: z.boolean().optional(),
     csvUrl: z.string().optional(),
     filename: z.string().optional(),
     columns: z.array(z.object({ name: z.string(), type: z.string() })).optional(),
@@ -74,7 +92,7 @@ export const uploadDatasetTool = createTool({
     message: z.string(),
   }),
   execute: async (context) => {
-    const { sessionId, orgId, csvUrl, filename: inputFilename } = context;
+    const { sessionId, orgId, csvUrl, filename: inputFilename, integrationId: inputIntegrationId } = context;
     const supabase = getSupabase();
 
     // ── 1. Fetch the CSV ───────────────────────────────────────────────────────
@@ -109,7 +127,11 @@ export const uploadDatasetTool = createTool({
     const columnSignature = buildColumnSignature(rawHeaders);
     const filename = inputFilename ?? csvUrl.split("/").pop() ?? "upload.csv";
 
-    // ── 3. Write dataset record ────────────────────────────────────────────────
+    // ── 3. Resolve integration type ───────────────────────────────────────────
+    const integrationTypeInferred = !inputIntegrationId;
+    const integrationId = inputIntegrationId ?? inferIntegrationId(rawHeaders);
+
+    // ── 4. Write dataset record ────────────────────────────────────────────────
     const { data: dataset, error: insertError } = await supabase
       .from("datasets")
       .insert({
@@ -121,6 +143,7 @@ export const uploadDatasetTool = createTool({
         column_signature: columnSignature,
         schema_json: columns,
         source_type: "csv_upload",
+        ...(integrationId ? { integration_type: integrationId } : {}),
       })
       .select("id")
       .single();
@@ -132,7 +155,7 @@ export const uploadDatasetTool = createTool({
       };
     }
 
-    // ── 4. Write raw_data_uploads record ─────────────────────────────────────
+    // ── 5. Write raw_data_uploads record ─────────────────────────────────────
     // Extract storage_path from csvUrl. The URL format is:
     // https://[project].supabase.co/storage/v1/object/public/csv-uploads/[path]
     const storagePathMatch = csvUrl.match(/\/csv-uploads\/(.+)$/);
@@ -148,6 +171,7 @@ export const uploadDatasetTool = createTool({
         storage_url: csvUrl,
         row_count: rowCount,
         session_id: sessionId,
+        ...(integrationId ? { integration_type: integrationId } : {}),
       })
       .select("id")
       .single();
@@ -176,11 +200,13 @@ export const uploadDatasetTool = createTool({
       success: true,
       datasetId: dataset.id as string,
       rawUploadId,
+      integrationId,
+      integrationTypeInferred,
       csvUrl,
       filename,
       columns,
       rowCount,
-      message: `Dataset registered: ${rowCount.toLocaleString()} rows, ${columns.length} columns.`,
+      message: `Dataset registered: ${rowCount.toLocaleString()} rows, ${columns.length} columns.${integrationId ? ` Integration: ${integrationId}${integrationTypeInferred ? " (inferred)" : ""}.` : " Integration type could not be determined — pass integrationId explicitly if known."}`,
     };
   },
 });

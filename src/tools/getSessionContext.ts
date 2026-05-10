@@ -98,6 +98,7 @@ export const getSessionContextTool = createTool({
     storeLocationLinked: z.boolean(),
     endpointCategory: z.string().nullable(),
     endpointKnownInterference: z.string().nullable(),
+    technicalEngagement: z.enum(["delegate", "collaborate", "direct"]).nullable(),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -138,10 +139,26 @@ export const getSessionContextTool = createTool({
         storeLocationLinked: false,
         endpointCategory: null,
         endpointKnownInterference: null,
+        technicalEngagement: null,
       };
     }
 
-    // ── 1b. Endpoint retail context (store hours, category, known interference) ─
+    // ── 1b. Technical engagement mode from user profile ───────────────────────
+    let technicalEngagement: "delegate" | "collaborate" | "direct" | null = null;
+    const userId = toolContext?.requestContext?.get?.("userId") as string | undefined;
+    if (userId) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("technical_engagement")
+        .eq("id", userId)
+        .maybeSingle();
+      const raw = profile?.technical_engagement as string | null | undefined;
+      if (raw === "delegate" || raw === "collaborate" || raw === "direct") {
+        technicalEngagement = raw;
+      }
+    }
+
+    // ── 1c. Endpoint retail context (store hours, category, known interference) ─
     // Always returned as null (not omitted) so the agent sees them explicitly
     // and knows to seek the missing info rather than silently skipping.
     let storeHours: Record<string, { open: number; close: number }> | null = null;
@@ -275,6 +292,7 @@ export const getSessionContextTool = createTool({
       storeLocationLinked,
       endpointCategory,
       endpointKnownInterference,
+      technicalEngagement,
     };
   },
 });
