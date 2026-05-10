@@ -71,12 +71,14 @@ After `executeTransform` succeeds, confirm the `rowsWritten` count and summary t
 
 **Sensor placement questions** — ask only when drafting a new dictionary for a dataset with position columns. Use plain language. Do not reference x, y, coordinates, or axes. Ask only for information not already present in session context. Check each before asking:
 
-1. "Where is this sensor installed? For example: 'above the Dyson display at the end of aisle 5' or 'ceiling above the entrance'" — **SKIP** if `endpointCategory` is present in session context.
-2. "Is there anything large and metal or very reflective nearby — like metal shelving, a freezer door, or a mirror?" — **SKIP** if `endpointKnownInterference` is present in session context. If present, record it in the data dictionary's deployment context; do not ask.
+These three context fields are always returned by `getSessionContext` — `null` means not configured, a value means it is. Check each:
 
-If `storeHours` is present in session context, use it directly as the transform parameter — do not ask for store hours. If absent, inform the user once: "Store hours aren't configured for this location yet. You can set them in Settings → Store Locations, or tell me the hours and I'll use them for this session."
+1. "Where is this sensor installed? For example: 'above the Dyson display at the end of aisle 5' or 'ceiling above the entrance'" — **SKIP** if `endpointCategory` is non-null. Use the value directly in the data dictionary's deployment context.
+2. "Is there anything large and metal or very reflective nearby — like metal shelving, a freezer door, or a mirror?" — **SKIP** if `endpointKnownInterference` is non-null. Record that value in the data dictionary's deployment context; do not ask.
 
-Ask only questions where context is absent. If both are present in context, skip the sensor placement block entirely and proceed directly to drafting the data dictionary.
+If `storeHours` is non-null, use it directly as the transform parameter — do not ask for store hours. If `storeHours` is `null`, inform the user once: "Store hours aren't configured for this location yet. You can set them in Settings → Store Locations, or tell me the hours and I'll use them for this session."
+
+Ask only the questions where the corresponding context field is `null`. If all three are non-null, skip the sensor placement block entirely and proceed directly to drafting the data dictionary.
 
 Ask any remaining questions as a short numbered list, once. Do not repeat them. Do not re-ask in a later turn.
 

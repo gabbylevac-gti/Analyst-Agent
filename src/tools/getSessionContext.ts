@@ -94,9 +94,9 @@ export const getSessionContextTool = createTool({
     endPointId: z.string().optional(),
     rangeStart: z.string().optional(),
     rangeEnd: z.string().optional(),
-    storeHours: z.record(z.object({ open: z.number(), close: z.number() })).optional(),
-    endpointCategory: z.string().optional(),
-    endpointKnownInterference: z.string().optional(),
+    storeHours: z.record(z.object({ open: z.number(), close: z.number() })).nullable(),
+    endpointCategory: z.string().nullable(),
+    endpointKnownInterference: z.string().nullable(),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -133,13 +133,18 @@ export const getSessionContextTool = createTool({
         sessionSummaries: [],
         dataDictionary: undefined,
         csvUrl: undefined,
+        storeHours: null,
+        endpointCategory: null,
+        endpointKnownInterference: null,
       };
     }
 
     // ── 1b. Endpoint retail context (store hours, category, known interference) ─
-    let storeHours: Record<string, { open: number; close: number }> | undefined;
-    let endpointCategory: string | undefined;
-    let endpointKnownInterference: string | undefined;
+    // Always returned as null (not omitted) so the agent sees them explicitly
+    // and knows to seek the missing info rather than silently skipping.
+    let storeHours: Record<string, { open: number; close: number }> | null = null;
+    let endpointCategory: string | null = null;
+    let endpointKnownInterference: string | null = null;
 
     const endPointId: string | undefined = sessionRecord?.end_point_id ?? undefined;
     if (endPointId) {
@@ -150,8 +155,8 @@ export const getSessionContextTool = createTool({
         .single();
 
       if (epData) {
-        endpointCategory = epData.category ?? undefined;
-        endpointKnownInterference = epData.known_interference ?? undefined;
+        endpointCategory = epData.category ?? null;
+        endpointKnownInterference = epData.known_interference ?? null;
         const loc = (epData.store_locations as unknown as { hours: Record<string, { open: number; close: number }> | null } | null);
         if (loc?.hours && Object.keys(loc.hours).length > 0) {
           storeHours = loc.hours;
