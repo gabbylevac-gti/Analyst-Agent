@@ -36,6 +36,8 @@ export const queryDataTool = createTool({
     "ALWAYS call this before writing the Take-Away so your answer contains real numbers. " +
     "The exploration code must query dataset_records via psycopg2 (DB_URL env var) and print a JSON " +
     "object with named statistic fields + a summary string as its final stdout line. " +
+    "IMPORTANT: The JSON payload column in dataset_records is named `data` (jsonb), NOT `raw_data`. " +
+    "Correct pattern: SELECT data FROM dataset_records WHERE raw_upload_id = %s — then access fields with data->>'field_name'. " +
     "Do NOT use this for producing charts or tables — use executeAnalysis for rendering.",
   inputSchema: z.object({
     rawUploadId: z.string().describe(
@@ -46,6 +48,8 @@ export const queryDataTool = createTool({
       "Python exploration code. Must connect to Postgres via psycopg2 (DB_URL env var), " +
       "query dataset_records WHERE raw_upload_id = os.environ['RAW_UPLOAD_ID'], " +
       "compute statistics, and print a JSON object as the final stdout line. " +
+      "CRITICAL: The column holding JSON path records is `data` (jsonb). Never use `raw_data`. " +
+      "Example: SELECT data FROM dataset_records WHERE raw_upload_id = %s — access fields with data->>'field_name'. " +
       "Include a 'summary' key with a plain-language sentence describing the key findings."
     ),
   }),

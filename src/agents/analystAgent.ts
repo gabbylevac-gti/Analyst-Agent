@@ -113,6 +113,8 @@ export const analystAgent = new Agent({
   instructions: ({ requestContext }) => buildInstructions(requestContext),
   model: anthropic("claude-sonnet-4-6"),
   memory: agentMemory,
+  defaultOptions: { maxSteps: 20 },
+  defaultStreamOptionsLegacy: { maxSteps: 20 },
   requestContextSchema: z.object({
     sessionId: z.string().optional().describe("Current session ID"),
     orgId: z.string().optional().describe("Organization ID"),
