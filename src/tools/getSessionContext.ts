@@ -95,6 +95,7 @@ export const getSessionContextTool = createTool({
     rangeStart: z.string().optional(),
     rangeEnd: z.string().optional(),
     storeHours: z.record(z.object({ open: z.number(), close: z.number() })).nullable(),
+    storeLocationLinked: z.boolean(),
     endpointCategory: z.string().nullable(),
     endpointKnownInterference: z.string().nullable(),
   }),
@@ -134,6 +135,7 @@ export const getSessionContextTool = createTool({
         dataDictionary: undefined,
         csvUrl: undefined,
         storeHours: null,
+        storeLocationLinked: false,
         endpointCategory: null,
         endpointKnownInterference: null,
       };
@@ -143,6 +145,7 @@ export const getSessionContextTool = createTool({
     // Always returned as null (not omitted) so the agent sees them explicitly
     // and knows to seek the missing info rather than silently skipping.
     let storeHours: Record<string, { open: number; close: number }> | null = null;
+    let storeLocationLinked = false;
     let endpointCategory: string | null = null;
     let endpointKnownInterference: string | null = null;
 
@@ -158,6 +161,7 @@ export const getSessionContextTool = createTool({
         endpointCategory = epData.category ?? null;
         endpointKnownInterference = epData.known_interference ?? null;
         const loc = (epData.store_locations as unknown as { hours: Record<string, { open: number; close: number }> | null } | null);
+        storeLocationLinked = !!loc;
         if (loc?.hours && Object.keys(loc.hours).length > 0) {
           storeHours = loc.hours;
         }
@@ -268,6 +272,7 @@ export const getSessionContextTool = createTool({
       rangeStart: sessionRecord?.range_start ?? undefined,
       rangeEnd: sessionRecord?.range_end ?? undefined,
       storeHours,
+      storeLocationLinked,
       endpointCategory,
       endpointKnownInterference,
     };

@@ -37,7 +37,7 @@ Acknowledge continuity briefly when prior context exists — one sentence is eno
 
 - **CSV upload:** Call `uploadDataset` to record the upload and retrieve a `datasetId`, `rawUploadId`, and `csvUrl`. Hold `rawUploadId` for the entire session — it is the key parameter for `executeTransform` and `executeAnalysis`. Never reuse an ID from a prior session. Immediately after calling `updateSession(active_dataset_id: ...)`, call `requestContextCard` (see Deployment Context Card below).
 - **DR6000 API:** If `getSessionContext` returns an `endPointId`:
-  1. **Store hours card (before fetching):** If `storeHours` from `getSessionContext` is `null`, call `requestContextCard` (see Trigger 2 in Deployment Context Card below). Wait for the user's `[Context set]` response before proceeding to Step 2. If `storeHours` is non-null, continue immediately.
+  1. **Store location/hours card (before fetching):** If `storeHours` from `getSessionContext` is `null` (which means the endpoint has no store linked, or has a store with no hours set), call `requestContextCard` (see Trigger 2 in Deployment Context Card below). Wait for the user's `[Context set]` response before proceeding to Step 2. If `storeHours` is non-null, continue immediately.
   2. Call `fetchSensorData` with `endPointId`, `rangeStart`, and `rangeEnd`. Use the returned `rawUploadId` for all subsequent transform and analysis calls.
 - **Stored dataset:** If the user selects a previously processed dataset, `getSessionContext` returns its `rawUploadId` and metadata. No ingestion needed — if `rawUploadId` is present, dataset_records already exists and you can proceed directly to `executeAnalysis`.
 
@@ -51,7 +51,8 @@ Call `requestContextCard` in two situations:
    - Wait for the user's `[Context set]` response before profiling or drafting.
 
 2. **DR6000 session with null storeHours** — fires before `fetchSensorData` for API sessions, or before `executeTransform` as a safety net if store hours are still missing:
-   - Call `requestContextCard(trigger: "template-requirements", sessionId: <sessionId>, orgId: <orgId>, templateName: "dr6000-transform-v1", requiredFields: ["storeHours"])`
+   - Call `requestContextCard(trigger: "template-requirements", sessionId: <sessionId>, orgId: <orgId>, templateName: "dr6000-transform-v1", requiredFields: ["storeHours"], endpointId: <endPointId from getSessionContext>)`
+   - Passing `endpointId` lets the card pre-populate the endpoint and check whether the endpoint has a store linked (and show a store selector if not, or a hours editor if the store has no hours).
    - Output: "The transform needs store hours to filter off-hours detections. Please fill in the card above — I'll continue once you set them."
    - Wait for the user's `[Context set]` response before proceeding.
 
@@ -59,7 +60,7 @@ Call `requestContextCard` in two situations:
 
 **When the user sends `[Context skipped]`:** The user declined to fill in the Deployment Context Card. Proceed with the fallback sensor placement questions (Q1, Q2 below) as plain text, and the store hours text prompt as before.
 
-**If all context is already present** (`endpointCategory` non-null, `storeHours` non-null, `endpointKnownInterference` non-null from `getSessionContext`): skip the card entirely and proceed directly.
+**If all context is already present** (`storeHours` non-null from `getSessionContext`): skip the card entirely and proceed directly. (`storeHours` being non-null means the endpoint has a linked store with hours — that is the sufficient condition.)
 
 **Transform step.** After ingestion (CSV upload or API fetch), immediately call `executeTransform` with the `rawUploadId` to write the clean path-level records to `dataset_records`. This is mandatory — no analysis can run until the clean layer is populated. Pass `datasetId` if available (from `uploadDataset`).
 

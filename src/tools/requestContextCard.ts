@@ -29,6 +29,10 @@ export const requestContextCardTool = createTool({
     templateName: z.string().optional().describe(
       "For template-requirements trigger: the template being prepared (e.g. 'dr6000-transform-v1')."
     ),
+    endpointId: z.string().optional().describe(
+      "For template-requirements trigger: the session's existing endPointId from getSessionContext. " +
+      "Passed so the card can pre-populate the endpoint and check if it has a store linked."
+    ),
   }),
   outputSchema: z.object({
     cardType: z.literal("context-card"),
@@ -38,6 +42,7 @@ export const requestContextCardTool = createTool({
     requiredFields: z.array(z.string()),
     optionalFields: z.array(z.string()),
     templateName: z.string().optional(),
+    endpointId: z.string().optional(),
     status: z.literal("pending"),
   }),
   execute: async (context) => ({
@@ -48,6 +53,7 @@ export const requestContextCardTool = createTool({
     requiredFields: context.requiredFields,
     optionalFields: context.optionalFields ?? [],
     templateName: context.templateName,
+    endpointId: context.endpointId,
     status: "pending" as const,
   }),
 });
