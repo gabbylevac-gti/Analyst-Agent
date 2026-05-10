@@ -76,7 +76,9 @@ export const executeCodeTool = createTool({
   description:
     "Execute a Python script in a sandboxed E2B environment. Provide the script as a string. " +
     "Optionally provide the CSV URL to upload to the sandbox before execution. " +
-    "Returns the parsed output envelope (chart, table, text, or multi artifact).",
+    "Returns the parsed output envelope (chart, table, text, or multi artifact). " +
+    "OUTPUT CONTRACT REQUIRED: the script MUST end with print(json.dumps({type, title, summary, ...})). " +
+    "Do NOT use this tool for CSV profiling or data exploration — use queryData instead (no output envelope required).",
   inputSchema: z.object({
     code: z.string().describe("The complete Python script to execute"),
     csvUrl: z
