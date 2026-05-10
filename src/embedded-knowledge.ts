@@ -83,7 +83,9 @@ Call \`requestContextCard\` in two situations:
 **Transform step.** After ingestion (CSV upload or API fetch), run the standardized transform pipeline:
 
 1. Call \`getTransformPipeline(integrationId, orgId)\` — \`integrationId\` comes from the \`uploadDataset\` or \`fetchSensorData\` result.
+   - **If \`integrationId\` is null**: do NOT call \`getTransformPipeline\`. Tell the user: "I couldn't identify the data format for this file — expected a paths report with \`target_id\`, \`x_m\`, \`y_m\` columns but these are missing. Please confirm the file format before I continue." Stop. Do NOT proceed to analysis.
    - If \`found: false\`: tell the user no approved transform exists for this integration type yet. Do not write transform code. Stop.
+   - **If \`executeTransform\` fails for any reason** (unfilled placeholders, schema mismatch, execution error): surface the error clearly. Do NOT retry with guessed parameters. Do NOT fall back to analyzing the raw CSV file. Analysis requires clean records in \`dataset_records\` — if the transform did not write rows, there is nothing to analyze. Stop and wait for the user.
 
 2. Read the \`parameters\` array. Resolve each param by its \`source\`:
    - \`source: "deployment_context"\` → read from \`getSessionContext\` output (field named by \`source_field\`, e.g. \`storeOpenHour\`, \`storeCloseHour\`)
@@ -113,7 +115,8 @@ Call \`requestContextCard\` in two situations:
 
 **Data Dictionary — three paths:**
 
-- **Already approved** (\`datasetApprovalStatus === 'approved'\` and \`dataDictionary\` returned): Setup is done. Call \`updateSession(phase: 'analysis')\` and proceed directly to Phase 3. No confirmation needed.
+- **Already approved** (\`datasetApprovalStatus === 'approved'\` and \`dataDictionary\` returned): This applies **only when no new upload happened this session** (i.e., you did not call \`uploadDataset\` or \`fetchSensorData\` in this conversation). If the session already has a linked, approved dataset and the user is asking a question, call \`updateSession(phase: 'analysis')\` and proceed to Phase 3.
+  - **NEVER use a prior session's approved dictionary for a new upload.** If \`uploadDataset\` or \`fetchSensorData\` was called in this session, treat the dictionary as \`'none'\` regardless of what \`getSessionContext\` returned — the new file may have a completely different schema. Always profile and draft a new dictionary for the new upload and wait for approval.
 
 - **Pending approval** (\`datasetApprovalStatus === 'pending'\`): Dictionary was drafted last session but not approved. Show a single short note: "I drafted a data dictionary last session — it's waiting for your approval. Want to review it, or shall I re-draft?" Do not run the full profile/draft flow again.
 

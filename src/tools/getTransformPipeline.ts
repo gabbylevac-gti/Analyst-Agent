@@ -80,6 +80,7 @@ export const getTransformPipelineTool = createTool({
       .select("id, name, parameters, org_id")
       .eq("integration_type", integrationId)
       .eq("approval_status", "approved")
+      .contains("tags", ["transformation"])
       .order("approved_at", { ascending: false });
 
     if (templateError) {
