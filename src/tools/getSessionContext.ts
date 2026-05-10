@@ -94,6 +94,9 @@ export const getSessionContextTool = createTool({
     endPointId: z.string().optional(),
     rangeStart: z.string().optional(),
     rangeEnd: z.string().optional(),
+    storeHours: z.record(z.object({ open: z.number(), close: z.number() })).optional(),
+    endpointCategory: z.string().optional(),
+    endpointKnownInterference: z.string().optional(),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -131,6 +134,29 @@ export const getSessionContextTool = createTool({
         dataDictionary: undefined,
         csvUrl: undefined,
       };
+    }
+
+    // ── 1b. Endpoint retail context (store hours, category, known interference) ─
+    let storeHours: Record<string, { open: number; close: number }> | undefined;
+    let endpointCategory: string | undefined;
+    let endpointKnownInterference: string | undefined;
+
+    const endPointId: string | undefined = sessionRecord?.end_point_id ?? undefined;
+    if (endPointId) {
+      const { data: epData } = await supabase
+        .from("end_points")
+        .select("category, known_interference, store_locations(hours)")
+        .eq("id", endPointId)
+        .single();
+
+      if (epData) {
+        endpointCategory = epData.category ?? undefined;
+        endpointKnownInterference = epData.known_interference ?? undefined;
+        const loc = (epData.store_locations as unknown as { hours: Record<string, { open: number; close: number }> | null } | null);
+        if (loc?.hours && Object.keys(loc.hours).length > 0) {
+          storeHours = loc.hours;
+        }
+      }
     }
 
     // ── 2. Approved beliefs (scoped to org) ────────────────────────────────
@@ -233,9 +259,12 @@ export const getSessionContextTool = createTool({
       dataDictionary,
       csvUrl,
       rawUploadId: sessionRecord?.raw_upload_id ?? undefined,
-      endPointId: sessionRecord?.end_point_id ?? undefined,
+      endPointId,
       rangeStart: sessionRecord?.range_start ?? undefined,
       rangeEnd: sessionRecord?.range_end ?? undefined,
+      storeHours,
+      endpointCategory,
+      endpointKnownInterference,
     };
   },
 });
