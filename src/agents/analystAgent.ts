@@ -28,6 +28,7 @@ import { setSessionNameTool } from "../tools/setSessionName";
 import { fetchSensorDataTool } from "../tools/fetchSensorData";
 import { uploadDatasetTool } from "../tools/uploadDataset";
 import { updateSessionTool } from "../tools/updateSession";
+import { requestContextCardTool } from "../tools/requestContextCard";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -134,5 +135,6 @@ export const analystAgent = new Agent({
     fetchSensorData: fetchSensorDataTool,
     uploadDataset: uploadDatasetTool,
     updateSession: updateSessionTool,
+    requestContextCard: requestContextCardTool,
   },
 });
