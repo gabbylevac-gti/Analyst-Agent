@@ -134,7 +134,10 @@ Run immediately after `[Data dictionary approved]`. Do not wait for the user to 
    - `source: "org_config"` → read from `resolvedOrgConfig` returned by `getTransformPipeline`. Use schema `default` if absent.
    - `source: "user_input"` → requires a `requestContextCard` cycle first.
 
-3. If any `required: true` param is still null after resolution, apply F5. Trigger `requestContextCard` if the missing param has `source: "deployment_context"`. Wait for `[Context set]`.
+3. If any `required: true` param is still null after resolution, apply F5. Trigger `requestContextCard` if the missing param has `source: "deployment_context"`:
+   - `requestContextCard(trigger: "template-requirements", sessionId, orgId, templateName: <templateName>, requiredFields: [<missingField>], endpointId: <endPointId from getSessionContext>)`
+   - **Always pass `endpointId`** from the `getSessionContext` result so the card pre-populates the endpoint selector and the user doesn't have to re-select it.
+   Wait for `[Context set]`.
 
 4. Call `executeTransform({ templateId, params: resolvedParams, rawUploadId, datasetId, orgId })`. Never pass raw code — use `templateId` only.
    - **TE mode:**
