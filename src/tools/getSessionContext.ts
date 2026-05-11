@@ -117,7 +117,7 @@ export const getSessionContextTool = createTool({
     // ── Fetch session record once — org_id scopes all subsequent reads/writes ─
     const { data: sessionRecord } = await supabase
       .from("sessions")
-      .select("csv_storage_path, csv_public_url, org_id, user_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id")
+      .select("csv_storage_path, csv_public_url, org_id, user_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id, technical_engagement")
       .eq("id", resolvedSessionId)
       .single();
 
@@ -153,16 +153,23 @@ export const getSessionContextTool = createTool({
     if (runtimeTE === "delegate" || runtimeTE === "collaborate" || runtimeTE === "direct") {
       technicalEngagement = runtimeTE;
     } else {
-      const userId = (sessionRecord?.user_id as string | null | undefined) ?? (toolContext?.requestContext?.get?.("userId") as string | undefined);
-      if (userId) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("technical_engagement")
-          .eq("id", userId)
-          .maybeSingle();
-        const raw = profile?.technical_engagement as string | null | undefined;
-        if (raw === "delegate" || raw === "collaborate" || raw === "direct") {
-          technicalEngagement = raw;
+      // Session-level override takes priority over profile default (persisted when user changes
+      // mode mid-session so it survives page reload).
+      const sessionTE = sessionRecord?.technical_engagement as string | null | undefined;
+      if (sessionTE === "delegate" || sessionTE === "collaborate" || sessionTE === "direct") {
+        technicalEngagement = sessionTE;
+      } else {
+        const userId = (sessionRecord?.user_id as string | null | undefined) ?? (toolContext?.requestContext?.get?.("userId") as string | undefined);
+        if (userId) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("technical_engagement")
+            .eq("id", userId)
+            .maybeSingle();
+          const raw = profile?.technical_engagement as string | null | undefined;
+          if (raw === "delegate" || raw === "collaborate" || raw === "direct") {
+            technicalEngagement = raw;
+          }
         }
       }
     }
