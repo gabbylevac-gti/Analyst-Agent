@@ -76,12 +76,14 @@ export const writeBeliefTool = createTool({
   outputSchema: z.object({
     success: z.boolean(),
     id: z.string().optional(),
+    belief_id: z.string().optional(),
     kind: z.literal("belief").optional(),
     approval_status: z.enum(["pending", "approved"]).optional(),
     content: z.string().optional(),
     type: z.string().optional(),
     confidence: z.number().optional(),
     tags: z.array(z.string()).optional(),
+    proposed_tags: z.array(z.string()).optional(),
     message: z.string(),
   }),
   execute: async (context) => {
@@ -161,6 +163,7 @@ export const writeBeliefTool = createTool({
           evidence_session_id: context.evidenceSessionId ?? null,
           approval_status: approvalStatus,
           org_id: context.orgId,
+          source: "observation",
         })
         .select("id")
         .single();
@@ -170,12 +173,14 @@ export const writeBeliefTool = createTool({
       return {
         success: true,
         id: data?.id,
+        belief_id: data?.id,
         kind: "belief" as const,
         approval_status: approvalStatus,
         content: context.content,
         type: context.type,
         confidence: context.confidence,
         tags: context.tags,
+        proposed_tags: context.tags,
         message: approvalStatus === "pending"
           ? "Belief submitted for approval. The user will see an inline approval card."
           : `Belief saved (${context.type}, confidence: ${context.confidence}). Available as a hypothesis in all future sessions.`,
