@@ -145,18 +145,25 @@ export const getSessionContextTool = createTool({
       };
     }
 
-    // ── 1b. Technical engagement mode from user profile ───────────────────────
+    // ── 1b. Technical engagement mode ────────────────────────────────────────
+    // Prefer the per-message override from runtimeContext (set by the frontend
+    // dropdown). Fall back to the user's profile default.
     let technicalEngagement: "delegate" | "collaborate" | "direct" | null = null;
-    const userId = (sessionRecord?.user_id as string | null | undefined) ?? (toolContext?.requestContext?.get?.("userId") as string | undefined);
-    if (userId) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("technical_engagement")
-        .eq("id", userId)
-        .maybeSingle();
-      const raw = profile?.technical_engagement as string | null | undefined;
-      if (raw === "delegate" || raw === "collaborate" || raw === "direct") {
-        technicalEngagement = raw;
+    const runtimeTE = toolContext?.requestContext?.get?.("technicalEngagement") as string | undefined;
+    if (runtimeTE === "delegate" || runtimeTE === "collaborate" || runtimeTE === "direct") {
+      technicalEngagement = runtimeTE;
+    } else {
+      const userId = (sessionRecord?.user_id as string | null | undefined) ?? (toolContext?.requestContext?.get?.("userId") as string | undefined);
+      if (userId) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("technical_engagement")
+          .eq("id", userId)
+          .maybeSingle();
+        const raw = profile?.technical_engagement as string | null | undefined;
+        if (raw === "delegate" || raw === "collaborate" || raw === "direct") {
+          technicalEngagement = raw;
+        }
       }
     }
 
