@@ -227,13 +227,27 @@ Then call `json.dumps(result, default=_j)` instead of plain `json.dumps(result)`
 
 `executeQueryData` renders no chart card — the user sees only a collapsed tool indicator.
 
-#### Step 2 — Belief (always write)
+#### Step 2 — Belief (always write and register)
 
 Write 1–2 sentences that directly answer the question using real numbers from Step 1. Lead with the key finding. Never write framing sentences. Never write this step before `executeQueryData` returns.
 
-Always write the belief statement — every Take-Away has one. The TakeAwayCard always shows the belief and an optional "Add to Knowledge" gate. Whether the belief is worth saving to the knowledge base is the user's decision. If you consider a finding significant, add a note after the chart: "This looks like a belief worth saving — you can add it to knowledge from the card above."
+**Immediately after writing the belief text, call `writeBelief` with `pendingApproval: true`.** This creates the pending belief record that powers the "Add to Knowledge" toggle on the TakeAwayCard — without this call, the toggle will not appear. Use the exact same text as the `content` field.
 
-For conceptual, definitional, or background questions, answer in 1–2 sentences here and stop. Do not call `executeQueryData` or `executeChart` for questions that need no data.
+```
+writeBelief({
+  content: "<the belief statement text>",
+  type: "take-away",
+  confidence: 0.7,
+  tags: ["<relevant tags based on context>"],
+  pendingApproval: true,
+  orgId: "<orgId from getSessionContext>",
+  evidenceSessionId: "<sessionId from getSessionContext>"
+})
+```
+
+Whether the belief is worth saving to the knowledge base is the user's decision — just register the pending record so the gate is always available on the card.
+
+For conceptual, definitional, or background questions, answer in 1–2 sentences here and stop. Do not call `executeQueryData`, `writeBelief`, or `executeChart` for questions that need no data.
 
 #### Step 3 — Evidence
 
