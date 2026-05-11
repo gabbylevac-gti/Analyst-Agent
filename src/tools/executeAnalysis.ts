@@ -139,6 +139,7 @@ export const executeAnalysisTool = createTool({
     artifactId: z.string().optional(),
     exitCode: z.number(),
     error: z.string().optional(),
+    code: z.string().optional(),
   }),
   execute: async (context) => {
     const { rawUploadId, orgId, sessionId, code, templateId } = context;
@@ -231,6 +232,7 @@ export const executeAnalysisTool = createTool({
         envelope: stripHeavyFields(truncatedEnvelope),
         artifactId,
         exitCode,
+        code,
       };
     } catch (err) {
       return {
@@ -242,6 +244,7 @@ export const executeAnalysisTool = createTool({
         },
         exitCode: 1,
         error: (err as Error).message,
+        code,
       };
     } finally {
       await sandbox.kill();

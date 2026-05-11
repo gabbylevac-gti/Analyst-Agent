@@ -2,14 +2,17 @@
  * Tool: executeTransform
  *
  * Runs an approved transformation template against raw ingested data.
- * Reads the CSV from Supabase Storage, runs the transform code in E2B,
- * and writes the resulting clean path-level rows to dataset_records (Postgres).
+ * Reads the CSV from Supabase Storage, runs the transform code in E2B.
+ * The transform Python code writes directly to typed audience tables via psycopg2
+ * (audience_observations, audience_15min_agg, audience_day_agg).
  *
  * This is Stage 1 of the two-stage execution pipeline:
- *   Stage 1 (this tool) — Raw → Clean:  raw CSV → dataset_records
- *   Stage 2 (executeAnalysis) — Clean → Enriched: dataset_records → analysis_artifacts
+ *   Stage 1 (this tool) — Raw → Clean:  raw CSV → audience_observations + agg tables
+ *   Stage 2 (executeAnalysis) — Clean → Enriched: typed tables → analysis_artifacts
  *
- * Transform templates must output: { type: "transform", rows: [...], summary: "..." }
+ * Transform templates must output:
+ *   { type: "transform", observationsWritten, agg15minWritten, aggDayWritten,
+ *     classificationCounts, qualityRules, summary }
  * See knowledge/output-contract.md.
  */
 
@@ -27,7 +30,11 @@ function getSupabase() {
 
 const transformOutputSchema = z.object({
   type: z.literal("transform"),
-  rows: z.array(z.record(z.unknown())),
+  observationsWritten: z.number(),
+  agg15minWritten: z.number(),
+  aggDayWritten: z.number(),
+  classificationCounts: z.object({ engaged: z.number(), passer_by: z.number() }),
+  qualityRules: z.object({ offHoursRemoved: z.number(), belowMinPointsRemoved: z.number() }),
   summary: z.string(),
 });
 
@@ -36,9 +43,10 @@ export const executeTransformTool = createTool({
   description:
     "Run an approved transformation template against raw ingested data. " +
     "Fetches the template code from code_templates by templateId, fills {{PLACEHOLDER}} " +
-    "tokens from params, runs it in E2B, and writes the resulting clean path-level rows " +
-    "to dataset_records. Call this after getTransformPipeline resolves the templateId and " +
-    "all required params. Never pass raw code — use templateId only.",
+    "tokens from params, runs it in E2B. The Python template writes clean path records and " +
+    "pre-computed aggregations directly to Postgres (audience_observations, audience_15min_agg, " +
+    "audience_day_agg). Call this after getTransformPipeline resolves the templateId and all " +
+    "required params. Never pass raw code — use templateId only.",
   inputSchema: z.object({
     rawUploadId: z.string().describe("raw_data_uploads.id returned by uploadDataset or fetchSensorData"),
     datasetId: z
@@ -56,7 +64,10 @@ export const executeTransformTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    rowsWritten: z.number().optional(),
+    observationsWritten: z.number().optional(),
+    agg15minWritten: z.number().optional(),
+    aggDayWritten: z.number().optional(),
+    classificationCounts: z.object({ engaged: z.number(), passer_by: z.number() }).optional(),
     summary: z.string(),
     error: z.string().optional(),
   }),
@@ -158,17 +169,23 @@ export const executeTransformTool = createTool({
 
       // ── 3. Pre-install transform libraries ────────────────────────────────
       await sandbox.runCode(
-        "import subprocess; subprocess.run(['pip', 'install', 'pandas', 'numpy', '--quiet', '--root-user-action=ignore'], check=True, capture_output=True)",
+        "import subprocess; subprocess.run(['pip', 'install', 'pandas', 'numpy', 'psycopg2-binary', '--quiet', '--root-user-action=ignore'], check=True, capture_output=True)",
         { language: "python" }
       );
 
       // ── 4. Run the filled template code ───────────────────────────────────
+      const dbPassword = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD ?? "");
+      const dbUrl = `postgresql://postgres.ftshahsqtkxxjmpsmyhp:${dbPassword}@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require`;
+
       const exec = await sandbox.runCode(code, {
         language: "python",
         envs: {
           SUPABASE_URL: process.env.SUPABASE_URL ?? "",
           SUPABASE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
           RAW_UPLOAD_ID: rawUploadId,
+          ORG_ID: orgId,
+          DATASET_ID: datasetId ?? "",
+          DB_URL: dbUrl,
         },
       });
       const stdout = exec.logs.stdout.join("\n");
@@ -195,50 +212,14 @@ export const executeTransformTool = createTool({
       } catch (err) {
         return {
           success: false,
-          summary: `Transform output did not match contract. Expected { type: 'transform', rows: [...], summary: '...' }. Got: ${lastLine.slice(0, 200)}`,
+          summary: `Transform output did not match contract. Expected { type: 'transform', observationsWritten, agg15minWritten, aggDayWritten, ... }. Got: ${lastLine.slice(0, 200)}`,
           error: (err as Error).message,
         };
       }
 
-      const { rows, summary } = transformOutput;
+      const { observationsWritten, agg15minWritten, aggDayWritten, classificationCounts, summary } = transformOutput;
 
-      if (!rows.length) {
-        return {
-          success: true,
-          rowsWritten: 0,
-          summary: `Transform complete. 0 rows produced. ${summary}`,
-        };
-      }
-
-      // ── 6. Bulk-insert rows into dataset_records ──────────────────────────
-      const records = rows.map((row) => ({
-        org_id: orgId,
-        raw_upload_id: rawUploadId,
-        dataset_id: datasetId ?? null,
-        data: row,
-      }));
-
-      const BATCH_SIZE = 500;
-      let inserted = 0;
-
-      for (let i = 0; i < records.length; i += BATCH_SIZE) {
-        const batch = records.slice(i, i + BATCH_SIZE);
-        const { error: insertError } = await supabase
-          .from("dataset_records")
-          .insert(batch);
-
-        if (insertError) {
-          return {
-            success: false,
-            rowsWritten: inserted,
-            summary: `Inserted ${inserted} rows before error: ${insertError.message}`,
-            error: insertError.message,
-          };
-        }
-        inserted += batch.length;
-      }
-
-      return { success: true, rowsWritten: inserted, summary };
+      return { success: true, observationsWritten, agg15minWritten, aggDayWritten, classificationCounts, summary };
     } finally {
       await sandbox.kill();
     }

@@ -99,6 +99,7 @@ export const getSessionContextTool = createTool({
     endpointCategory: z.string().nullable(),
     endpointKnownInterference: z.string().nullable(),
     technicalEngagement: z.enum(["delegate", "collaborate", "direct"]).nullable(),
+    cleanDataAvailable: z.boolean(),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -116,7 +117,7 @@ export const getSessionContextTool = createTool({
     // ── Fetch session record once — org_id scopes all subsequent reads/writes ─
     const { data: sessionRecord } = await supabase
       .from("sessions")
-      .select("csv_storage_path, csv_public_url, org_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id")
+      .select("csv_storage_path, csv_public_url, org_id, user_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id")
       .eq("id", resolvedSessionId)
       .single();
 
@@ -140,12 +141,13 @@ export const getSessionContextTool = createTool({
         endpointCategory: null,
         endpointKnownInterference: null,
         technicalEngagement: null,
+        cleanDataAvailable: false,
       };
     }
 
     // ── 1b. Technical engagement mode from user profile ───────────────────────
     let technicalEngagement: "delegate" | "collaborate" | "direct" | null = null;
-    const userId = toolContext?.requestContext?.get?.("userId") as string | undefined;
+    const userId = (sessionRecord?.user_id as string | null | undefined) ?? (toolContext?.requestContext?.get?.("userId") as string | undefined);
     if (userId) {
       const { data: profile } = await supabase
         .from("profiles")
@@ -222,7 +224,18 @@ export const getSessionContextTool = createTool({
     if (orgId) summariesQuery = summariesQuery.eq("org_id", orgId);
     const { data: sessionSummaries } = await summariesQuery;
 
-    // ── 5. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
+    // ── 5. Clean data availability — check audience_observations for this upload ──
+    let cleanDataAvailable = false;
+    const rawUploadIdForCheck = sessionRecord?.raw_upload_id;
+    if (rawUploadIdForCheck) {
+      const { count } = await supabase
+        .from("audience_observations")
+        .select("id", { count: "exact", head: true })
+        .eq("raw_upload_id", rawUploadIdForCheck);
+      cleanDataAvailable = (count ?? 0) > 0;
+    }
+
+    // ── 6. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
     let dataDictionary = undefined;
     let datasetApprovalStatus: "none" | "pending" | "approved" = "none";
     let activeDatasetId: string | undefined = sessionRecord?.active_dataset_id ?? undefined;
@@ -275,7 +288,7 @@ export const getSessionContextTool = createTool({
     return {
       staticKnowledge,
       orgId,
-      phase: (sessionRecord?.phase as "objective" | "setup" | "analysis" | "wrap_up") ?? "objective",
+      phase: (sessionRecord?.phase as "objective" | "setup" | "analysis" | "wrap_up") ?? "setup",
       objective: sessionRecord?.objective ?? undefined,
       activeDatasetId,
       datasetApprovalStatus,
@@ -293,6 +306,7 @@ export const getSessionContextTool = createTool({
       endpointCategory,
       endpointKnownInterference,
       technicalEngagement,
+      cleanDataAvailable,
     };
   },
 });

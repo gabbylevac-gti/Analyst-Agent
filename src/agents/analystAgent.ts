@@ -30,6 +30,7 @@ import { uploadDatasetTool } from "../tools/uploadDataset";
 import { updateSessionTool } from "../tools/updateSession";
 import { requestContextCardTool } from "../tools/requestContextCard";
 import { getTransformPipelineTool } from "../tools/getTransformPipeline";
+import { proposeAnalysisTool } from "../tools/proposeAnalysis";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -81,10 +82,12 @@ const staticInstructions: CoreSystemMessage = {
 function buildInstructions(requestContext: any): CoreSystemMessage[] {
   const sessionId = requestContext.get("sessionId") as string | undefined;
   const orgId = requestContext.get("orgId") as string | undefined;
+  const technicalEngagement = requestContext.get("technicalEngagement") as string | undefined;
   if (!sessionId && !orgId) return [staticInstructions];
   const lines = ["## Active Session Context"];
   if (sessionId) lines.push(`- sessionId: ${sessionId}`);
   if (orgId) lines.push(`- orgId: ${orgId}`);
+  if (technicalEngagement) lines.push(`- technicalEngagement: ${technicalEngagement}`);
   lines.push(
     "\nWhen calling `getSessionContext`, always pass the sessionId above. " +
     "Never use \"current\" or any other placeholder."
@@ -121,6 +124,7 @@ export const analystAgent = new Agent({
     sessionId: z.string().optional().describe("Current session ID"),
     orgId: z.string().optional().describe("Organization ID"),
     userId: z.string().optional().describe("Authenticated user ID"),
+    technicalEngagement: z.string().optional().describe("User's TE mode: delegate | collaborate | direct"),
   }),
   tools: {
     executeCode: executeCodeTool,       // deprecated — use executeAnalysis
@@ -138,5 +142,6 @@ export const analystAgent = new Agent({
     updateSession: updateSessionTool,
     requestContextCard: requestContextCardTool,
     getTransformPipeline: getTransformPipelineTool,
+    proposeAnalysis: proposeAnalysisTool,
   },
 });

@@ -44,12 +44,13 @@ export const fetchSensorDataTool = createTool({
       .describe("End of data range from [API_CONTEXT] (range_end). ISO 8601 string."),
     reportType: z
       .enum(["sessions", "paths"])
-      .default("sessions")
+      .default("paths")
       .describe(
-        "DR6000 report type. " +
-        "Use 'sessions' when the question involves people counts, dwell time, engagement rates, proximity, or zone analysis — one row per person-visit. " +
-        "Use 'paths' when the question involves spatial movement, trajectories, x/y position data, heatmaps, or ghost path detection — one row per ~1-second position reading. " +
-        "Default to 'sessions' unless coordinate/spatial data is explicitly needed."
+        "DR6000 report type. Always use 'paths' for the ingestion pipeline — " +
+        "it returns per-second position readings (target_id, x_m, y_m) that the " +
+        "dr6000-transform-v1 template requires for QR-1/QR-2/QR-3 classification. " +
+        "The 'sessions' endpoint returns pre-aggregated rows and is not compatible " +
+        "with the transform template. Do not use 'sessions' unless explicitly instructed."
       ),
   }),
   outputSchema: z.object({
