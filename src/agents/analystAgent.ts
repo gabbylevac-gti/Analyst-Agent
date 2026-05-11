@@ -17,8 +17,9 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
 import { executeCodeTool } from "../tools/executeCode";
 import { executeTransformTool } from "../tools/executeTransform";
-import { executeAnalysisTool } from "../tools/executeAnalysis";
-import { queryDataTool } from "../tools/queryData";
+import { executeChartTool } from "../tools/executeChart";
+import { proposeQueryDataTool } from "../tools/proposeQueryData";
+import { executeQueryDataTool } from "../tools/executeQueryData";
 import { getSessionContextTool } from "../tools/getSessionContext";
 import { readKnowledgeTool } from "../tools/readKnowledge";
 import { writeBeliefTool } from "../tools/writeBelief";
@@ -30,7 +31,6 @@ import { uploadDatasetTool } from "../tools/uploadDataset";
 import { updateSessionTool } from "../tools/updateSession";
 import { requestContextCardTool } from "../tools/requestContextCard";
 import { getTransformPipelineTool } from "../tools/getTransformPipeline";
-import { proposeAnalysisTool } from "../tools/proposeAnalysis";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -127,10 +127,11 @@ export const analystAgent = new Agent({
     technicalEngagement: z.string().optional().describe("User's TE mode: delegate | collaborate | direct"),
   }),
   tools: {
-    executeCode: executeCodeTool,       // deprecated — use executeAnalysis
+    executeCode: executeCodeTool,       // deprecated — use executeChart
     executeTransform: executeTransformTool,
-    executeAnalysis: executeAnalysisTool,
-    queryData: queryDataTool,
+    executeChart: executeChartTool,
+    proposeQueryData: proposeQueryDataTool,
+    executeQueryData: executeQueryDataTool,
     getSessionContext: getSessionContextTool,
     readKnowledge: readKnowledgeTool,
     writeBelief: writeBeliefTool,
@@ -142,6 +143,5 @@ export const analystAgent = new Agent({
     updateSession: updateSessionTool,
     requestContextCard: requestContextCardTool,
     getTransformPipeline: getTransformPipelineTool,
-    proposeAnalysis: proposeAnalysisTool,
   },
 });

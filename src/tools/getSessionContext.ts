@@ -14,6 +14,8 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
+import { readFileSync } from "fs";
+import { join } from "path";
 // Domain knowledge constants moved to analystAgent.ts system prompt.
 
 // ─── Supabase client ───────────────────────────────────────────────────────────
@@ -106,7 +108,17 @@ export const getSessionContextTool = createTool({
     const supabase = getSupabase();
 
     // ── 1. Static domain knowledge — in system prompt, not tool results ───────
-    const staticKnowledge = "Domain knowledge available in system prompt (radar-sensors, path-classification, retail-context, dr6000-schema, seed-beliefs, output-contract).";
+    let stakeholderKnowledge = "";
+    try {
+      const knowledgePath = join(process.cwd(), "knowledge/stakeholders/knowledge.md");
+      stakeholderKnowledge = readFileSync(knowledgePath, "utf-8");
+    } catch {
+      // File not found or unreadable — proceed without stakeholder context
+    }
+
+    const staticKnowledge = stakeholderKnowledge
+      ? `Domain knowledge available in system prompt (radar-sensors, path-classification, retail-context, dr6000-schema, seed-beliefs, output-contract).\n\n## Stakeholder Preferences\n\n${stakeholderKnowledge}`
+      : "Domain knowledge available in system prompt (radar-sensors, path-classification, retail-context, dr6000-schema, seed-beliefs, output-contract).";
 
     // The agent may pass "current" as a placeholder when it doesn't yet have
     // the real session UUID. Fall back to the sessionId from the verified
