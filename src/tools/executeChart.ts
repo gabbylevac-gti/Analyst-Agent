@@ -120,6 +120,10 @@ export const executeChartTool = createTool({
     ),
     params: z.record(z.unknown()).optional().describe("Template parameters (thresholds, time windows, etc.)"),
     templateId: z.string().optional().describe("code_templates.id if running an approved template"),
+    updateArtifactId: z.string().optional().describe(
+      "When set, UPDATE this analysis_artifacts row in-place instead of inserting a new one. " +
+      "Used for chart edit reruns so the original TakeAwayCard updates without creating a new one."
+    ),
   }),
   outputSchema: z.object({
     envelope: artifactSchema,
@@ -129,7 +133,7 @@ export const executeChartTool = createTool({
     code: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, orgId, sessionId, code, templateId } = context;
+    const { rawUploadId, orgId, sessionId, code, templateId, updateArtifactId } = context;
     const supabase = getSupabase();
 
     const sandbox = await Sandbox.create({ apiKey: process.env.E2B_API_KEY });
@@ -187,27 +191,38 @@ export const executeChartTool = createTool({
 
       let artifactId: string | undefined;
       if (envelope.type !== "error") {
-        const { data: artifact } = await supabase
-          .from("analysis_artifacts")
-          .insert({
-            org_id: orgId,
-            session_id: sessionId,
-            template_id: templateId ?? null,
-            raw_upload_id: rawUploadId,
-            html: typeof (envelope as Record<string, unknown>).html === "string"
-              ? (envelope as Record<string, unknown>).html as string
-              : null,
-            data: (envelope as Record<string, unknown>).data ?? {},
-            summary: envelope.summary,
-            insights: Array.isArray((envelope as Record<string, unknown>).insights)
-              ? (envelope as Record<string, unknown>).insights as string[]
-              : [],
-            input_params: context.params ?? {},
-          })
-          .select("id")
-          .single();
+        const artifactPayload = {
+          html: typeof (envelope as Record<string, unknown>).html === "string"
+            ? (envelope as Record<string, unknown>).html as string
+            : null,
+          data: (envelope as Record<string, unknown>).data ?? {},
+          summary: envelope.summary,
+          insights: Array.isArray((envelope as Record<string, unknown>).insights)
+            ? (envelope as Record<string, unknown>).insights as string[]
+            : [],
+          input_params: context.params ?? {},
+        };
 
-        artifactId = artifact?.id as string | undefined;
+        if (updateArtifactId) {
+          await supabase
+            .from("analysis_artifacts")
+            .update(artifactPayload)
+            .eq("id", updateArtifactId);
+          artifactId = updateArtifactId;
+        } else {
+          const { data: artifact } = await supabase
+            .from("analysis_artifacts")
+            .insert({
+              org_id: orgId,
+              session_id: sessionId,
+              template_id: templateId ?? null,
+              raw_upload_id: rawUploadId,
+              ...artifactPayload,
+            })
+            .select("id")
+            .single();
+          artifactId = artifact?.id as string | undefined;
+        }
       }
 
       return {

@@ -266,9 +266,14 @@ Write 1–3 recommended next questions only when an insight is clearly actionabl
 
 ---
 
-**Chart rerun requests:** When a user message contains `[Chart rerun request: <code>]`, call `executeChart` with the exact code provided — zero modifications. This is an in-card edit triggered from the TakeAwayCard. Skip Steps 1 and 2 entirely.
+**Chart rerun requests:** When a user message contains `[Chart rerun for artifactId: <id>: <code>]`:
+1. Call `executeChart(code, updateArtifactId: <id>, rawUploadId, orgId, sessionId)` with the exact code — zero modifications.
+2. Do NOT send any text response. The chart re-renders in the lightbox.
 
-**Refinements (chart edits via chat):** When the user asks to change a chart via the Chat Edit tab, call `executeChart` directly with the updated code. Skip Steps 1 and 2.
+**Chart edit instructions:** When a user message contains `[Chart edit instruction for artifactId: <id>: <instruction>]`:
+1. Rewrite the current chart code to implement the instruction. Preserve the data query; only change visualization properties.
+2. Call `executeChart(newCode, updateArtifactId: <id>, rawUploadId, orgId, sessionId)`.
+3. Do NOT send any text response.
 
 **Table display rules:** Never include UUID columns (use `#` index). Limit to 5 most relevant columns. Always aggregate — never return raw per-row data unless explicitly asked.
 
