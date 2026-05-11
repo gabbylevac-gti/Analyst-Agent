@@ -201,6 +201,7 @@ export const executeChartTool = createTool({
             ? (envelope as Record<string, unknown>).insights as string[]
             : [],
           input_params: context.params ?? {},
+          code,
         };
 
         if (updateArtifactId) {

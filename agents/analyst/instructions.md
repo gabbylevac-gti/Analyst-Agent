@@ -271,9 +271,10 @@ Write 1–3 recommended next questions only when an insight is clearly actionabl
 2. Do NOT send any text response. The chart re-renders in the lightbox.
 
 **Chart edit instructions:** When a user message contains `[Chart edit instruction for artifactId: <id>: <instruction>]`:
-1. Rewrite the current chart code to implement the instruction. Preserve the data query; only change visualization properties.
-2. Call `executeChart(newCode, updateArtifactId: <id>, rawUploadId, orgId, sessionId)`.
-3. Do NOT send any text response.
+1. The message contains "Current chart code:" immediately after the bracketed instruction — that is the current chart code. Use it as the starting point for the edit.
+2. Apply the instruction to that code: change only visualization properties, preserve the data query exactly.
+3. Call `executeChart(newCode, updateArtifactId: <id>, rawUploadId, orgId, sessionId)`.
+4. Do NOT send any text response.
 
 **Table display rules:** Never include UUID columns (use `#` index). Limit to 5 most relevant columns. Always aggregate — never return raw per-row data unless explicitly asked.
 
