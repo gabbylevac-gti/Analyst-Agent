@@ -231,10 +231,17 @@ Then call `json.dumps(result, default=_j)` instead of plain `json.dumps(result)`
 
 #### Step 2 — Belief (selective, not automatic)
 
+**Decision gate — ask yourself before calling `writeBelief`:**
+> "If I showed this finding to a different analyst next month with a fresh dataset, would it still hold and be worth knowing?"
+
+If no → skip `writeBelief`. Still produce the charts.
+
 The finding must meet **all three** criteria to warrant a belief:
 - **Generalizable**: a pattern-level claim that holds across dates/sessions ("Afternoon hours capture the majority of traffic" — not "Tuesday had 12 more paths than Monday")
 - **Defensible**: supported by at least 50 paths or 3+ days of data
 - **Non-obvious**: something a new analyst would not assume without this data
+
+Typical cases that do NOT qualify: single-metric daily totals, data quality notes, counts without rates, anything the user just told you to re-slice.
 
 **Three paths — choose exactly one:**
 
@@ -264,12 +271,14 @@ executeChart({ ..., beliefStatement: "<same text>", beliefId: "<id from writeBel
 
 **Path B — Finding doesn't pass the gate:** Skip `writeBelief`. Call `executeChart` without `beliefId` or `beliefStatement`.
 
-**Path C — Corroborating an existing approved belief:** Check existing approved beliefs from `getSessionContext().beliefs`. If an approved belief already captures this same pattern (same endpoint, same metric, same direction), do NOT call `writeBelief`. Pass that belief's `id` directly to `executeChart` as `beliefId`, and the chart-specific corroborating insight as `beliefStatement`. In your message, note: "This corroborates an existing belief — linking as additional evidence." Do not repeat the belief statement in your Key patterns text.
+**Path C — Corroborating an existing approved belief:** Check existing approved beliefs from `getSessionContext().beliefs`. If an approved belief already captures this same pattern (same endpoint, same metric, same direction), do NOT call `writeBelief`. Pass that belief's `id` directly to `executeChart` as `beliefId`, and the chart-specific corroborating insight as `beliefStatement`. The new artifact is linked as additional evidence. Do not repeat the belief statement in your Key patterns text.
 ```
 executeChart({ ..., beliefStatement: "<chart-specific insight>", beliefId: "<existing belief id>" })
 ```
 
 For conceptual, definitional, or background questions, answer in 1–2 sentences here and stop. Do not call `executeQueryData`, `writeBelief`, or `executeChart` for questions that need no data.
+
+**Message format — no preamble before Key patterns:** Your analysis message starts directly with `**Key patterns:**` — no sentence before it. No "Here's the hourly picture...", no "Based on the data...", no narrative introduction of any kind. The emoji bullet list IS the opening of your response.
 
 **Insight format in your message:** Always present "Key patterns" as emoji-bulleted paragraphs. Use:
 - 🕐🕑🕒🕓🕔🕕🕖🕗🕘🕙🕚🕛 for time references (match the clock emoji to the hour, e.g. 🕐 for 1pm, 🕓 for 4pm)
