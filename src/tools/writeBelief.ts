@@ -22,15 +22,16 @@ function getSupabase() {
 export const writeBeliefTool = createTool({
   id: "write-belief",
   description:
-    "Submit a belief, false-belief, or session summary to Supabase. " +
-    "For beliefs, always pass pendingApproval: true — the record is saved as pending and the user " +
-    "approves it via the inline card in the chat UI. Do not wait for a text 'yes' first. " +
-    "For session summaries, set type to 'session_summary' — these go to session_summaries table.",
+    "Submit a belief or session summary to Supabase. " +
+    "For beliefs (take-away, belief, false-belief, algorithm-version): always pass pendingApproval: true. " +
+    "The belief is saved as pending immediately — no user approval required to store it. " +
+    "The TakeAwayCard Bookmark lets users promote it to the formal knowledge base later. " +
+    "For session summaries: pass sessionId + keyFindings (the type field is ignored for summaries).",
   inputSchema: z.object({
     content: z.string().describe("The belief content in plain language"),
     type: z
-      .enum(["take-away", "belief", "false-belief", "pending", "algorithm-version", "session_summary"])
-      .describe("Belief category"),
+      .enum(["take-away", "belief", "false-belief", "algorithm-version"])
+      .describe("Belief category. Never 'pending' (that is approval_status, not type). Never 'session_summary' (use type='session_summary' only when writing to session_summaries table via the sessionId path)."),
     confidence: z
       .number()
       .min(0)
@@ -91,7 +92,7 @@ export const writeBeliefTool = createTool({
 
     try {
       // ── Session summary — goes to session_summaries table ──────────────
-      if (context.type === "session_summary") {
+      if (context.sessionId && context.keyFindings && context.keyFindings.length > 0) {
         if (!context.sessionId) {
           return { success: false, message: "sessionId is required for session summaries" };
         }
@@ -182,7 +183,7 @@ export const writeBeliefTool = createTool({
         tags: context.tags,
         proposed_tags: context.tags,
         message: approvalStatus === "pending"
-          ? "Belief submitted for approval. The user will see an inline approval card."
+          ? "Belief saved as pending. No user action required — the TakeAwayCard Bookmark lets users promote it to approved knowledge."
           : `Belief saved (${context.type}, confidence: ${context.confidence}). Available as a hypothesis in all future sessions.`,
       };
     } catch (err) {

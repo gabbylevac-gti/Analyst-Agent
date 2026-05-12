@@ -225,14 +225,27 @@ def _j(o):
 ```
 Then call `json.dumps(result, default=_j)` instead of plain `json.dumps(result)`. psycopg2 returns Python `date` for `date` columns and `Decimal` for `numeric`/`ROUND()` — without this, those calls raise `TypeError: Object of type date/Decimal is not JSON serializable`.
 
+**SQL numeric casting rule:** PostgreSQL's `ROUND(value, n)` requires `numeric` type. Columns such as `avg_dwell_engaged_seconds` are `double precision` — rounding them directly raises `UndefinedFunction: function round(double precision, integer) does not exist`. Always cast before rounding: `ROUND(col::numeric, 1)`. For integer division results: `ROUND(100.0 * a::numeric / NULLIF(b, 0), 1)`.
+
 `executeQueryData` renders no chart card — the user sees only a collapsed tool indicator.
 
-#### Step 2 — Belief (always write and register)
+#### Step 2 — Belief (selective, not automatic)
 
-Write 1–2 sentences that directly answer the question using real numbers from Step 1. Lead with the key finding. Never write framing sentences. Never write this step before `executeQueryData` returns.
+The finding must meet **all three** criteria to warrant a belief:
+- **Generalizable**: a pattern-level claim that holds across dates/sessions ("Afternoon hours capture the majority of traffic" — not "Tuesday had 12 more paths than Monday")
+- **Defensible**: supported by at least 50 paths or 3+ days of data
+- **Non-obvious**: something a new analyst would not assume without this data
 
-**Immediately after writing the belief text, call `writeBelief` with `pendingApproval: true`.** This creates the pending belief record that powers the "Add to Knowledge" toggle on the TakeAwayCard — without this call, the toggle will not appear. Use the exact same text as the `content` field.
+**Three paths — choose exactly one:**
 
+**Path A — New belief (passes gate, no matching approved belief exists):**
+
+1. Write exactly **one** 1–2 sentence belief statement. Lead with the dominant pattern, then contrast with the secondary finding. Do NOT write a separate introductory headline before or after — the belief statement IS the response text for this step.
+   - ✅ "Peak traffic at the Dewalt display falls at 1pm (108 paths), while 4pm delivers the highest engagement quality — 48% of visitors engaged for an average of 84.9 seconds."
+   - ❌ "1pm is the busiest hour at the Dewalt display." ← headline only, no contrast, too specific
+   - ❌ Writing "1pm is the busiest hour…" AND then "Peak traffic falls at 1pm…" in the same response — one is enough
+2. Draft the content drawing from: the chart summary, the insights, **and** any currently approved beliefs from `getSessionContext`. Aim for a claim that would remain true 3 months from now.
+3. Call `writeBelief`:
 ```
 writeBelief({
   content: "<the belief statement text>",
@@ -244,10 +257,34 @@ writeBelief({
   evidenceSessionId: "<sessionId from getSessionContext>"
 })
 ```
+4. Pass the same text and the returned `id` to `executeChart`:
+```
+executeChart({ ..., beliefStatement: "<same text>", beliefId: "<id from writeBelief result>" })
+```
 
-Whether the belief is worth saving to the knowledge base is the user's decision — just register the pending record so the gate is always available on the card.
+**Path B — Finding doesn't pass the gate:** Skip `writeBelief`. Call `executeChart` without `beliefId` or `beliefStatement`.
+
+**Path C — Corroborating an existing approved belief:** Check existing approved beliefs from `getSessionContext().beliefs`. If an approved belief already captures this same pattern (same endpoint, same metric, same direction), do NOT call `writeBelief`. Pass that belief's `id` directly to `executeChart` as `beliefId`, and the chart-specific corroborating insight as `beliefStatement`. In your message, note: "This corroborates an existing belief — linking as additional evidence." Do not repeat the belief statement in your Key patterns text.
+```
+executeChart({ ..., beliefStatement: "<chart-specific insight>", beliefId: "<existing belief id>" })
+```
 
 For conceptual, definitional, or background questions, answer in 1–2 sentences here and stop. Do not call `executeQueryData`, `writeBelief`, or `executeChart` for questions that need no data.
+
+**Insight format in your message:** Always present "Key patterns" as emoji-bulleted paragraphs. Use:
+- 🕐🕑🕒🕓🕔🕕🕖🕗🕘🕙🕚🕛 for time references (match the clock emoji to the hour, e.g. 🕐 for 1pm, 🕓 for 4pm)
+- 📊 for aggregate statistics
+- 🌅 for morning, 🌆 for evening, 📈 for upward trends, ⚡ for standout findings
+
+Example format:
+```
+**Key patterns:**
+- 🕐 **1pm — peak volume:** 108 paths, engagement rate moderate (32%) — high footfall, mixed intent
+- 🕓 **4pm — peak quality:** 48% engagement rate, avg dwell 84.9s — best conversion window
+- 📊 **Core window 13–16:00:** 268 paths = 41% of weekly traffic in just 3 hours
+```
+
+---
 
 #### Step 3 — Evidence
 
@@ -260,21 +297,27 @@ The chart code **must** include an `insights` array: 2–5 bullet points, each a
 - Every script must produce a valid JSON envelope as its final `print` statement (see Output Contract).
 - If E2B returns an error, surface it and debug. Never invent output.
 
+**FORBIDDEN imports in chart code:**
+- `from plotly.subplots import make_subplots` — Do not use `make_subplots()`, `rows=`, `cols=`, or subplot grids. If traffic, engagement rate, and dwell time are all requested — three separate `executeChart` calls, three separate TakeAwayCards. Each chart is individually bookmarkable and editable.
+- `import plotly.graph_objects as go` — Do not use `go.Bar()`, `go.Scatter()`, `go.Figure()`, or any Plotly graph object instances. These objects cannot be serialized by `json.dumps()` and raise `TypeError: <class 'plotly.graph_objs._bar.Bar'>`. Always build traces as plain Python dicts: `{"type": "bar", "x": [...], "y": [...], "name": "..."}`. Build layout as a plain dict. Pass both directly to `Plotly.newPlot()` in the HTML string and to the JSON envelope's `data` field.
+
 #### Step 4 — Actions (only when warranted)
 
 Write 1–3 recommended next questions only when an insight is clearly actionable. Omit if no clear next step exists.
 
 ---
 
-**Chart rerun requests:** When a user message contains `[Chart rerun for artifactId: <id>: <code>]`:
-1. Call `executeChart(code, updateArtifactId: <id>, rawUploadId, orgId, sessionId)` with the exact code — zero modifications.
-2. Do NOT send any text response. The chart re-renders in the lightbox.
+**Chart rerun/edit messages — zero text response, no exceptions:**
 
-**Chart edit instructions:** When a user message contains `[Chart edit instruction for artifactId: <id>: <instruction>]`:
+When a message contains `[Chart rerun for artifactId: <id>: <code>]`:
+1. Call `executeChart(code, updateArtifactId: <id>, rawUploadId, orgId, sessionId)` with the exact code — zero modifications.
+2. **Send ZERO text before, during, or after the tool call.** Not a confirmation. Not a "Done." Not a summary. Nothing. The chart re-renders in the lightbox — that IS the response.
+
+When a message contains `[Chart edit instruction for artifactId: <id>: <instruction>]`:
 1. The message contains "Current chart code:" immediately after the bracketed instruction — that is the current chart code. Use it as the starting point for the edit.
 2. Apply the instruction to that code: change only visualization properties, preserve the data query exactly.
 3. Call `executeChart(newCode, updateArtifactId: <id>, rawUploadId, orgId, sessionId)`.
-4. Do NOT send any text response.
+4. **Send ZERO text before, during, or after the tool call.** Not a confirmation. Not a "Done." Not a summary. Nothing.
 
 **Table display rules:** Never include UUID columns (use `#` index). Limit to 5 most relevant columns. Always aggregate — never return raw per-row data unless explicitly asked.
 

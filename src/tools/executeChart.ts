@@ -124,6 +124,12 @@ export const executeChartTool = createTool({
       "When set, UPDATE this analysis_artifacts row in-place instead of inserting a new one. " +
       "Used for chart edit reruns so the original TakeAwayCard updates without creating a new one."
     ),
+    beliefStatement: z.string().optional().describe(
+      "Belief statement text to store alongside this artifact. Pass the same text used in writeBelief."
+    ),
+    beliefId: z.string().optional().describe(
+      "knowledge_beliefs.id returned by writeBelief. Links this artifact to its belief record."
+    ),
   }),
   outputSchema: z.object({
     envelope: artifactSchema,
@@ -133,7 +139,7 @@ export const executeChartTool = createTool({
     code: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, orgId, sessionId, code, templateId, updateArtifactId } = context;
+    const { rawUploadId, orgId, sessionId, code, templateId, updateArtifactId, beliefStatement, beliefId } = context;
     const supabase = getSupabase();
 
     const sandbox = await Sandbox.create({ apiKey: process.env.E2B_API_KEY });
@@ -192,6 +198,7 @@ export const executeChartTool = createTool({
       let artifactId: string | undefined;
       if (envelope.type !== "error") {
         const artifactPayload = {
+          title: envelope.title ?? null,
           html: typeof (envelope as Record<string, unknown>).html === "string"
             ? (envelope as Record<string, unknown>).html as string
             : null,
@@ -202,6 +209,8 @@ export const executeChartTool = createTool({
             : [],
           input_params: context.params ?? {},
           code,
+          belief_statement: beliefStatement ?? null,
+          belief_id: beliefId ?? null,
         };
 
         if (updateArtifactId) {

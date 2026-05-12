@@ -100,7 +100,9 @@ POC uses `knowledge_beliefs` (analyst agent table). Full-vision uses `beliefs` (
 - Run `bun run build` to verify TypeScript before committing
 
 ## Key Docs (read before building)
-- Platform PRD: `../docs/Campaign-Management-Platform-PRD.md`
-- Agent architecture: `../docs/Agent-Architecture.md`
-- Data architecture: `../docs/Data-Architecture.md`
-- Risk register: `../docs/Risk-Register.md`
+All product docs live in `../app-v2/docs/`:
+- Platform PRD: `../app-v2/docs/Campaign-Management-Platform-PRD.md`
+- Agent architecture: `../app-v2/docs/architecture/Agent-Architecture.md`
+- Data architecture: `../app-v2/docs/architecture/Data-Architecture.md`
+- Risk register: `../app-v2/docs/planning/Risk-Register.md`
+- QA playbook: `../app-v2/docs/qa/QA-Playbook.md`
