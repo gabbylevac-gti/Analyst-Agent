@@ -18,6 +18,41 @@ import { readFileSync } from "fs";
 import { join } from "path";
 // Domain knowledge constants moved to analystAgent.ts system prompt.
 
+// ─── Date range helpers ────────────────────────────────────────────────────────
+
+function eachDayInRange(start: string, end: string): string[] {
+  const dates: string[] = [];
+  const current = new Date(start);
+  const endDate = new Date(end);
+  current.setUTCHours(0, 0, 0, 0);
+  endDate.setUTCHours(0, 0, 0, 0);
+  while (current <= endDate) {
+    dates.push(current.toISOString().split("T")[0]);
+    current.setUTCDate(current.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function contiguousRanges(sortedDates: string[]): Array<{ start: string; end: string }> {
+  if (sortedDates.length === 0) return [];
+  const ranges: Array<{ start: string; end: string }> = [];
+  let rangeStart = sortedDates[0];
+  let prev = sortedDates[0];
+  for (let i = 1; i < sortedDates.length; i++) {
+    const curr = sortedDates[i];
+    const diffDays =
+      (new Date(curr + "T00:00:00Z").getTime() - new Date(prev + "T00:00:00Z").getTime()) /
+      86400000;
+    if (diffDays > 1) {
+      ranges.push({ start: rangeStart, end: prev });
+      rangeStart = curr;
+    }
+    prev = curr;
+  }
+  ranges.push({ start: rangeStart, end: prev });
+  return ranges;
+}
+
 // ─── Supabase client ───────────────────────────────────────────────────────────
 
 function getSupabase() {
@@ -101,7 +136,12 @@ export const getSessionContextTool = createTool({
     endpointCategory: z.string().nullable(),
     endpointKnownInterference: z.string().nullable(),
     technicalEngagement: z.enum(["delegate", "collaborate", "direct"]).nullable(),
-    cleanDataAvailable: z.boolean(),
+    cleanDataSummary: z.object({
+      available: z.boolean(),
+      coveragePercent: z.number(),
+      coveredDates: z.array(z.string()),
+      missingRanges: z.array(z.object({ start: z.string(), end: z.string() })),
+    }),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -153,7 +193,7 @@ export const getSessionContextTool = createTool({
         endpointCategory: null,
         endpointKnownInterference: null,
         technicalEngagement: null,
-        cleanDataAvailable: false,
+        cleanDataSummary: { available: false, coveragePercent: 0, coveredDates: [], missingRanges: [] },
       };
     }
 
@@ -250,15 +290,66 @@ export const getSessionContextTool = createTool({
     if (orgId) summariesQuery = summariesQuery.eq("org_id", orgId);
     const { data: sessionSummaries } = await summariesQuery;
 
-    // ── 5. Clean data availability — check audience_observations for this upload ──
-    let cleanDataAvailable = false;
-    const rawUploadIdForCheck = sessionRecord?.raw_upload_id;
-    if (rawUploadIdForCheck) {
-      const { count } = await supabase
-        .from("audience_observations")
-        .select("id", { count: "exact", head: true })
-        .eq("raw_upload_id", rawUploadIdForCheck);
-      cleanDataAvailable = (count ?? 0) > 0;
+    // ── 5. Clean data coverage — endpoint+range aware query via audience_day_agg ──
+    // For API sessions (endpoint + date range): join audience_day_agg with
+    // raw_data_uploads on endpoint_id to find which dates are in the clean layer.
+    // For CSV sessions (no endpoint): fall back to binary check on raw_upload_id.
+    let cleanDataSummary: {
+      available: boolean;
+      coveragePercent: number;
+      coveredDates: string[];
+      missingRanges: Array<{ start: string; end: string }>;
+    };
+
+    const sessionEndPointId = sessionRecord?.end_point_id as string | null | undefined;
+    const sessionRangeStart = sessionRecord?.range_start as string | null | undefined;
+    const sessionRangeEnd = sessionRecord?.range_end as string | null | undefined;
+
+    if (sessionEndPointId && sessionRangeStart && sessionRangeEnd) {
+      // API session: query covered dates via audience_day_agg joined on endpoint_id
+      const rangeStartDate = sessionRangeStart.split("T")[0];
+      const rangeEndDate = sessionRangeEnd.split("T")[0];
+
+      const { data: coveredRows } = await supabase
+        .from("audience_day_agg")
+        .select("date, raw_data_uploads!inner(endpoint_id)")
+        .eq("raw_data_uploads.endpoint_id", sessionEndPointId)
+        .eq("org_id", orgId)
+        .gte("date", rangeStartDate)
+        .lte("date", rangeEndDate);
+
+      const coveredSet = new Set<string>((coveredRows ?? []).map((r) => r.date as string));
+      const expectedDates = eachDayInRange(rangeStartDate, rangeEndDate);
+      const missingDates = expectedDates.filter((d) => !coveredSet.has(d));
+      const missingRanges = contiguousRanges(missingDates);
+
+      cleanDataSummary = {
+        available: missingDates.length === 0,
+        coveragePercent:
+          expectedDates.length === 0
+            ? 0
+            : Math.round((coveredSet.size / expectedDates.length) * 100),
+        coveredDates: [...coveredSet].sort(),
+        missingRanges,
+      };
+    } else {
+      // CSV session: binary check — any audience_observations for this upload?
+      const rawUploadIdForCheck = sessionRecord?.raw_upload_id as string | null | undefined;
+      if (rawUploadIdForCheck) {
+        const { count } = await supabase
+          .from("audience_observations")
+          .select("id", { count: "exact", head: true })
+          .eq("raw_upload_id", rawUploadIdForCheck);
+        const hasData = (count ?? 0) > 0;
+        cleanDataSummary = {
+          available: hasData,
+          coveragePercent: hasData ? 100 : 0,
+          coveredDates: [],
+          missingRanges: [],
+        };
+      } else {
+        cleanDataSummary = { available: false, coveragePercent: 0, coveredDates: [], missingRanges: [] };
+      }
     }
 
     // ── 6. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
@@ -332,7 +423,7 @@ export const getSessionContextTool = createTool({
       endpointCategory,
       endpointKnownInterference,
       technicalEngagement,
-      cleanDataAvailable,
+      cleanDataSummary,
     };
   },
 });

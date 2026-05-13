@@ -175,6 +175,9 @@ export const fetchSensorDataTool = createTool({
         row_count: rowCount,
         session_id: sessionId,
         integration_type: "dr6000-radar",
+        endpoint_id: endPointId,
+        range_start: startTime,
+        range_end: endTime,
       })
       .select("id")
       .single();

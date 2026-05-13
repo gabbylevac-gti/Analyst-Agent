@@ -31,6 +31,8 @@ import { uploadDatasetTool } from "../tools/uploadDataset";
 import { updateSessionTool } from "../tools/updateSession";
 import { requestContextCardTool } from "../tools/requestContextCard";
 import { getTransformPipelineTool } from "../tools/getTransformPipeline";
+import { proposeColumnMappingTool } from "../tools/proposeColumnMapping";
+import { triggerPipelineRunTool } from "../tools/triggerPipelineRun";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -143,5 +145,7 @@ export const analystAgent = new Agent({
     updateSession: updateSessionTool,
     requestContextCard: requestContextCardTool,
     getTransformPipeline: getTransformPipelineTool,
+    proposeColumnMapping: proposeColumnMappingTool,
+    triggerPipelineRun: triggerPipelineRunTool,
   },
 });

@@ -61,6 +61,10 @@ export const executeTransformTool = createTool({
       .record(z.unknown())
       .optional()
       .describe("Resolved parameter values keyed by placeholder name (e.g. { STORE_OPEN_HOUR: 8, MIN_POINTS: 2 }). All required params must be present."),
+    endPointId: z
+      .string()
+      .optional()
+      .describe("Endpoint ID that produced the raw upload. Passed through to pipeline_run_log for audit."),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -72,7 +76,7 @@ export const executeTransformTool = createTool({
     error: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, datasetId, orgId, templateId, params } = context;
+    const { rawUploadId, datasetId, orgId, templateId, params, endPointId } = context;
     const supabase = getSupabase();
 
     // ── 1. Fetch template code from code_templates ────────────────────────────
@@ -218,6 +222,24 @@ export const executeTransformTool = createTool({
       }
 
       const { observationsWritten, agg15minWritten, aggDayWritten, classificationCounts, summary } = transformOutput;
+
+      // ── 6. Write template_id to audience_observations rows ────────────────
+      // Non-blocking: failure here does not fail the transform result.
+      await supabase
+        .from("audience_observations")
+        .update({ template_id: templateId })
+        .eq("raw_upload_id", rawUploadId)
+        .eq("org_id", orgId);
+
+      // ── 7. Write pipeline_run_log record ──────────────────────────────────
+      await supabase.from("pipeline_run_log").insert({
+        org_id: orgId,
+        endpoint_id: endPointId ?? null,
+        trigger_reason: "chat",
+        template_id: templateId,
+        status: "complete",
+        rows_written: observationsWritten,
+      });
 
       return { success: true, observationsWritten, agg15minWritten, aggDayWritten, classificationCounts, summary };
     } finally {
