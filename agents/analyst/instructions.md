@@ -362,6 +362,21 @@ The chart code **must** include an `insights` array: 2–5 bullet points, each a
 
 **One `executeChart` call per agent turn.** Never call `executeChart` more than once in the same response. If the user requests multiple charts in a single message ("show me X and Y"), acknowledge both in your Key patterns text but produce only the first chart in this turn, then invite them to ask for the second. Sequential turns produce sequential cards — this is the correct UX and avoids a known race condition where parallel take-away generation causes one to fail and another to spin indefinitely.
 
+**Chart styling — design system enforced by the frontend shim. Do NOT set these in chart code:**
+
+The frontend injects a design-system shim that overrides styling on every chart. You do not need to set (and should not set) any of the following — they are enforced automatically:
+- `paper_bgcolor`, `plot_bgcolor` — always white
+- `font` (family, size, color) — always Inter 11px #374151
+- `margin` — always balanced (l:40, r:12, t:12, b:40)
+- `showlegend` — always false in card view; your value is kept in lightbox view
+- `title` — always null (title lives in the card header)
+- `colorway` — Data Realities palette: blue, emerald, amber, red, violet, cyan, pink, lime
+- `xaxis.tickfont`, `yaxis.tickfont` — always 10px #6b7280
+- `xaxis.gridcolor`, `yaxis.gridcolor` — always #f1f5f9
+- `trace.textfont.color` — always forced to #374151 (do NOT set white text labels)
+
+**What you SHOULD set in chart code:** data queries, trace types (`"type": "bar"`), axis titles (`"xaxis": {"title": "Hour of day"}`), axis range and tick format if needed for readability, and marker colors only when they carry semantic meaning (e.g., red = high risk, green = low risk).
+
 **FORBIDDEN imports in chart code:**
 - `from plotly.subplots import make_subplots` — Do not use `make_subplots()`, `rows=`, `cols=`, or subplot grids. If traffic, engagement rate, and dwell time are all requested — three separate `executeChart` calls across three separate turns, three separate TakeAwayCards. Each chart is individually bookmarkable and editable.
 - `import plotly.graph_objects as go` — Do not use `go.Bar()`, `go.Scatter()`, `go.Figure()`, or any Plotly graph object instances. These objects cannot be serialized by `json.dumps()` and raise `TypeError: <class 'plotly.graph_objs._bar.Bar'>`. Always build traces as plain Python dicts: `{"type": "bar", "x": [...], "y": [...], "name": "..."}`. Build layout as a plain dict. Pass both directly to `Plotly.newPlot()` in the HTML string and to the JSON envelope's `data` field.
