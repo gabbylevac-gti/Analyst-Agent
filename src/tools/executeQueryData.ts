@@ -34,19 +34,17 @@ export const executeQueryDataTool = createTool({
     "Returns data to the agent but renders NO chart or table in the chat — only a collapsed tool indicator. " +
     "ALWAYS call this before writing the belief statement so your answer contains real numbers. " +
     "In Delegate mode, call this directly. In Collaborate mode, call proposeQueryData first and wait for approval. " +
-    "The exploration code must query audience_observations, audience_15min_agg, or audience_day_agg via psycopg2 " +
-    "(DB_URL env var) and print a JSON object with named statistic fields + a summary string as its final stdout line. " +
+    "Injects ENDPOINT_ID and ORG_ID env vars — scope all queries by endpoint_id when set, org_id otherwise. " +
     "Do NOT use this for producing charts — use executeChart for rendering.",
   inputSchema: z.object({
-    rawUploadId: z.string().describe(
-      "raw_data_uploads.id — injected as RAW_UPLOAD_ID env var so the code can filter records"
+    endPointId: z.string().optional().describe(
+      "end_points.id — injected as ENDPOINT_ID. When set, the code must scope by endpoint_id + org_id."
     ),
-    orgId: z.string().describe("Organization ID"),
+    orgId: z.string().describe("Organization ID — injected as ORG_ID"),
     code: z.string().describe(
-      "Python exploration code. Must connect to Postgres via psycopg2 (DB_URL env var), " +
-      "query audience_observations/audience_15min_agg/audience_day_agg filtered by RAW_UPLOAD_ID, " +
-      "compute statistics, and print a JSON object as the final stdout line. " +
-      "Include a 'summary' key with a plain-language sentence describing the key findings."
+      "Python exploration code. Connect via psycopg2 (DB_URL), scope by ENDPOINT_ID + ORG_ID (or ORG_ID alone for CSV sessions), " +
+      "query audience_observations/audience_15min_agg/audience_day_agg, and print a JSON object as the final stdout line. " +
+      "Include a 'summary' key."
     ),
   }),
   outputSchema: z.object({
@@ -56,7 +54,7 @@ export const executeQueryDataTool = createTool({
     error: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, code } = context;
+    const { endPointId, orgId, code } = context;
     const sandbox = await Sandbox.create({ apiKey: process.env.E2B_API_KEY });
 
     try {
@@ -72,7 +70,8 @@ export const executeQueryDataTool = createTool({
         language: "python",
         envs: {
           DB_URL: dbUrl,
-          RAW_UPLOAD_ID: rawUploadId,
+          ENDPOINT_ID: endPointId ?? "",
+          ORG_ID: orgId,
         },
       });
 

@@ -102,21 +102,17 @@ export const executeChartTool = createTool({
   id: "execute-chart",
   description:
     "Execute chart code against the clean audience tables to produce an interactive Plotly visualization. " +
-    "Injects a Postgres read-only connection (DB_URL env var) so the code can query " +
-    "audience_observations, audience_15min_agg, or audience_day_agg filtered by RAW_UPLOAD_ID. " +
-    "Writes the output envelope to analysis_artifacts and returns it. " +
-    "Always pass rawUploadId (not csvUrl) — chart code reads from Postgres, not Storage. " +
-    "Requires executeTransform to have run first.",
+    "Injects DB_URL, ENDPOINT_ID, and ORG_ID env vars. Scope: endpoint_id + org_id when ENDPOINT_ID is set; " +
+    "org_id + endpoint_id IS NULL for CSV sessions. Writes the output envelope to analysis_artifacts and returns it.",
   inputSchema: z.object({
-    rawUploadId: z.string().describe(
-      "raw_data_uploads.id — injected as RAW_UPLOAD_ID env var for the chart code to filter records"
+    endPointId: z.string().optional().describe(
+      "end_points.id — injected as ENDPOINT_ID. When set, chart code must scope queries by endpoint_id + org_id."
     ),
-    orgId: z.string().describe("Organization ID"),
+    orgId: z.string().describe("Organization ID — injected as ORG_ID"),
     sessionId: z.string().describe("Session ID — used to link the written analysis_artifact"),
     code: z.string().describe(
-      "Chart Python code. Must connect to Postgres via psycopg2 (DB_URL env var), " +
-      "query audience_observations/audience_15min_agg/audience_day_agg filtered by RAW_UPLOAD_ID, " +
-      "and print a valid output envelope as the final stdout line."
+      "Chart Python code. Connect via psycopg2 (DB_URL), scope by ENDPOINT_ID + ORG_ID (or ORG_ID alone for CSV sessions), " +
+      "query audience_observations/audience_15min_agg/audience_day_agg, and print a valid output envelope as the final stdout line."
     ),
     params: z.record(z.unknown()).optional().describe("Template parameters (thresholds, time windows, etc.)"),
     templateId: z.string().optional().describe("code_templates.id if running an approved template"),
@@ -139,7 +135,7 @@ export const executeChartTool = createTool({
     code: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, orgId, sessionId, code, templateId, updateArtifactId, beliefStatement, beliefId } = context;
+    const { endPointId, orgId, sessionId, code, templateId, updateArtifactId, beliefStatement, beliefId } = context;
     const supabase = getSupabase();
 
     const sandbox = await Sandbox.create({ apiKey: process.env.E2B_API_KEY });
@@ -157,7 +153,8 @@ export const executeChartTool = createTool({
         language: "python",
         envs: {
           DB_URL: dbUrl,
-          RAW_UPLOAD_ID: rawUploadId,
+          ENDPOINT_ID: endPointId ?? "",
+          ORG_ID: orgId,
         },
       });
 
@@ -226,7 +223,7 @@ export const executeChartTool = createTool({
               org_id: orgId,
               session_id: sessionId,
               template_id: templateId ?? null,
-              raw_upload_id: rawUploadId,
+              raw_upload_id: null,
               ...artifactPayload,
             })
             .select("id")

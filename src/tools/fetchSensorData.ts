@@ -67,10 +67,10 @@ export const fetchSensorDataTool = createTool({
     const { sessionId, endPointId, startTime, endTime, reportType } = context;
     const supabase = getSupabase();
 
-    // ── 1. Look up endpoint record → mac_address + org_id ─────────────────────
+    // ── 1. Look up endpoint record → mac_address + org_id + timezone ──────────
     const { data: endPoint, error: endPointError } = await supabase
       .from("end_points")
-      .select("mac_address, org_id")
+      .select("mac_address, org_id, timezone")
       .eq("id", endPointId)
       .single();
 
@@ -110,11 +110,35 @@ export const fetchSensorDataTool = createTool({
       };
     }
 
-    // ── 3. Build and execute DR6000 API request ────────────────────────────────
+    // ── 3. Normalize to canonical calendar dates in endpoint's local timezone ──
+    // date_start / date_end are the canonical DATE keys used for coverage checks
+    // and the UNIQUE constraint on audience_day_agg(org_id, endpoint_id, date).
+    // The API call uses local-day boundaries (00:00:00 to 23:59:59) so each fetch
+    // covers exactly one or more complete calendar days.
+    const tz = (endPoint.timezone as string | null) ?? "America/Toronto";
+
+    function toLocalDateStr(isoTs: string, timezone: string): string {
+      return new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(isoTs));
+    }
+
+    const dateStart = toLocalDateStr(startTime, tz);
+    const dateEnd   = toLocalDateStr(endTime, tz);
+
+    // Fetch window: full calendar-day boundaries in local time (no timezone suffix —
+    // the DR6000 API interprets these as local store time).
+    const normalizedStart = `${dateStart} 00:00:00`;
+    const normalizedEnd   = `${dateEnd} 23:59:59`;
+
+    // ── 4. Build and execute DR6000 API request ────────────────────────────────
     const params = new URLSearchParams({
       mac_address: endPoint.mac_address,
-      start_time: startTime,
-      end_time: endTime,
+      start_time: normalizedStart,
+      end_time: normalizedEnd,
       type: "csv",
     });
 
@@ -138,14 +162,12 @@ export const fetchSensorDataTool = createTool({
       return { success: false, message: "DR6000 API returned an empty response for the given parameters." };
     }
 
-    // ── 4. Count rows (header excluded) ───────────────────────────────────────
+    // ── 5. Count rows (header excluded) ───────────────────────────────────────
     const lines = csvText.trim().split("\n");
     const rowCount = lines.length - 1;
 
-    // ── 5. Upload CSV to Supabase Storage ──────────────────────────────────────
-    const safeStart = startTime.replace(/[^0-9T]/g, "-");
-    const safeEnd = endTime.replace(/[^0-9T]/g, "-");
-    const filename = `dr6000_${reportType}_${safeStart}_${safeEnd}.csv`;
+    // ── 6. Upload CSV to Supabase Storage ──────────────────────────────────────
+    const filename = `dr6000_${reportType}_${dateStart}_${dateEnd}.csv`;
     const storagePath = `sessions/${sessionId}/${filename}`;
 
     const { error: uploadError } = await supabase.storage
@@ -159,11 +181,13 @@ export const fetchSensorDataTool = createTool({
       return { success: false, message: `Failed to upload CSV to storage: ${uploadError.message}` };
     }
 
-    // ── 6. Get public URL ─────────────────────────────────────────────────────
+    // ── 7. Get public URL ─────────────────────────────────────────────────────
     const { data: urlData } = supabase.storage.from("csv-uploads").getPublicUrl(storagePath);
     const csvUrl = urlData.publicUrl;
 
-    // ── 7. Write raw_data_uploads record ──────────────────────────────────────
+    // ── 8. Write raw_data_uploads record ──────────────────────────────────────
+    // date_start / date_end are canonical calendar dates (local timezone).
+    // range_start / range_end preserve the original app-provided timestamps for audit.
     const { data: rawUpload, error: rawUploadError } = await supabase
       .from("raw_data_uploads")
       .insert({
@@ -178,6 +202,8 @@ export const fetchSensorDataTool = createTool({
         endpoint_id: endPointId,
         range_start: startTime,
         range_end: endTime,
+        date_start: dateStart,
+        date_end: dateEnd,
       })
       .select("id")
       .single();
@@ -191,7 +217,7 @@ export const fetchSensorDataTool = createTool({
 
     const rawUploadId = rawUpload.id as string;
 
-    // ── 8. Update session with csvUrl + raw_upload_id ─────────────────────────
+    // ── 9. Update session with csvUrl + raw_upload_id ─────────────────────────
     await supabase
       .from("sessions")
       .update({
@@ -209,7 +235,7 @@ export const fetchSensorDataTool = createTool({
       filename,
       rowCount,
       reportType,
-      message: `Fetched ${rowCount} rows (${reportType} report). CSV ready at ${csvUrl}`,
+      message: `Fetched ${rowCount} rows (${reportType} report) for ${dateStart} to ${dateEnd}. CSV ready at ${csvUrl}`,
     };
   },
 });

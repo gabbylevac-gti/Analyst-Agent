@@ -65,6 +65,10 @@ export const executeTransformTool = createTool({
       .string()
       .optional()
       .describe("Endpoint ID that produced the raw upload. Passed through to pipeline_run_log for audit."),
+    columnMapping: z
+      .record(z.string())
+      .optional()
+      .describe("Column rename map: { csvHeader: canonicalName }. When provided, a preprocessing step renames CSV columns before the template runs. Use this when the uploaded CSV has non-canonical column names (e.g. 'sample_time' → 'log_creation_time')."),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -76,8 +80,45 @@ export const executeTransformTool = createTool({
     error: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, datasetId, orgId, templateId, params, endPointId } = context;
+    const { rawUploadId, orgId, templateId, params, endPointId, columnMapping } = context;
+    let { datasetId } = context;
     const supabase = getSupabase();
+
+    // ── 0a. Validate datasetId — guard against agent passing rawUploadId by mistake ─
+    // The agent occasionally hallucinates datasetId from rawUploadId (same-looking UUID).
+    // Verify it exists in datasets before trusting it; clear if stale or wrong.
+    if (datasetId) {
+      const { data: dsCheck } = await supabase
+        .from("datasets")
+        .select("id")
+        .eq("id", datasetId)
+        .maybeSingle();
+      if (!dsCheck) {
+        datasetId = undefined;
+      }
+    }
+
+    // ── 0b. Idempotency guard ─────────────────────────────────────────────────
+    // If audience_observations already has rows for this raw_upload_id, the transform
+    // already ran successfully. Skip E2B to prevent duplicate agg rows.
+    // The UNIQUE constraint on audience_day_agg(org_id, endpoint_id, date) is the
+    // DB-level safety net for overlapping fetches; this guard prevents redundant E2B work.
+    const { count: existingObsCount } = await supabase
+      .from("audience_observations")
+      .select("id", { count: "exact", head: true })
+      .eq("raw_upload_id", rawUploadId)
+      .eq("org_id", orgId);
+
+    if ((existingObsCount ?? 0) > 0) {
+      return {
+        success: true,
+        observationsWritten: 0,
+        agg15minWritten: 0,
+        aggDayWritten: 0,
+        classificationCounts: { engaged: 0, passer_by: 0 },
+        summary: `Upload ${rawUploadId} already transformed (${existingObsCount} observations exist). Skipping re-transform.`,
+      };
+    }
 
     // ── 1. Fetch template code from code_templates ────────────────────────────
     const { data: template, error: templateError } = await supabase
@@ -177,7 +218,26 @@ export const executeTransformTool = createTool({
         { language: "python" }
       );
 
-      // ── 4. Run the filled template code ───────────────────────────────────
+      // ── 4. Apply column mapping (rename headers before template reads CSV) ──
+      if (columnMapping && Object.keys(columnMapping).length > 0) {
+        // Filter out skipped columns (null/empty values mean "keep original name")
+        const activeRenames = Object.fromEntries(
+          Object.entries(columnMapping).filter(([, v]) => v && v !== "__skip__")
+        );
+        if (Object.keys(activeRenames).length > 0) {
+          const renameJson = JSON.stringify(activeRenames);
+          const renameScript = [
+            "import pandas as pd, json",
+            `rename_map = json.loads(${JSON.stringify(renameJson)})`,
+            "df = pd.read_csv('/sandbox/upload.csv')",
+            "df.rename(columns=rename_map, inplace=True)",
+            "df.to_csv('/sandbox/upload.csv', index=False)",
+          ].join("\n");
+          await sandbox.runCode(renameScript, { language: "python" });
+        }
+      }
+
+      // ── 5. Run the filled template code ───────────────────────────────────
       const dbPassword = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD ?? "");
       const dbUrl = `postgresql://postgres.ftshahsqtkxxjmpsmyhp:${dbPassword}@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require`;
 
@@ -189,12 +249,13 @@ export const executeTransformTool = createTool({
           RAW_UPLOAD_ID: rawUploadId,
           ORG_ID: orgId,
           DATASET_ID: datasetId ?? "",
+          ENDPOINT_ID: endPointId ?? "",
           DB_URL: dbUrl,
         },
       });
       const stdout = exec.logs.stdout.join("\n");
 
-      // ── 5. Parse transform output envelope ────────────────────────────────
+      // ── 6. Parse transform output envelope ────────────────────────────────
       const lines = stdout.trim().split("\n").filter(Boolean);
       const lastLine = lines[lines.length - 1];
 
@@ -212,18 +273,29 @@ export const executeTransformTool = createTool({
       let transformOutput: z.infer<typeof transformOutputSchema>;
       try {
         const parsed = JSON.parse(lastLine);
+
+        // Template error envelopes have type: "error" — surface the human-readable
+        // message directly instead of letting Zod produce a confusing validation dump.
+        if (parsed && typeof parsed === "object" && parsed.type === "error") {
+          const title = (parsed as Record<string, unknown>).title as string | undefined;
+          const msg = (parsed as Record<string, unknown>).message as string | undefined;
+          const errMsg = title && msg ? `${title}: ${msg}` : title ?? msg ?? JSON.stringify(parsed);
+          return { success: false, summary: `Transform failed — ${errMsg}`, error: errMsg };
+        }
+
         transformOutput = transformOutputSchema.parse(parsed);
       } catch (err) {
         return {
           success: false,
-          summary: `Transform output did not match contract. Expected { type: 'transform', observationsWritten, agg15minWritten, aggDayWritten, ... }. Got: ${lastLine.slice(0, 200)}`,
+          summary: `Transform output did not match contract. Expected { type: 'transform', ... }. Last line: ${lastLine.slice(0, 300)}`,
           error: (err as Error).message,
         };
       }
 
       const { observationsWritten, agg15minWritten, aggDayWritten, classificationCounts, summary } = transformOutput;
 
-      // ── 6. Write template_id to audience_observations rows ────────────────
+      // ── 7. Write template_id to audience_observations rows ────────────────
+      // endpoint_id is written directly by the template during INSERT.
       // Non-blocking: failure here does not fail the transform result.
       await supabase
         .from("audience_observations")
@@ -231,7 +303,7 @@ export const executeTransformTool = createTool({
         .eq("raw_upload_id", rawUploadId)
         .eq("org_id", orgId);
 
-      // ── 7. Write pipeline_run_log record ──────────────────────────────────
+      // ── 8. Write pipeline_run_log record ──────────────────────────────────
       await supabase.from("pipeline_run_log").insert({
         org_id: orgId,
         endpoint_id: endPointId ?? null,

@@ -114,22 +114,22 @@ const artifactSchema = z.object({
 export const executeAnalysisTool = createTool({
   id: "execute-analysis",
   description:
-    "Execute an approved analysis template against the clean dataset_records layer. " +
-    "Injects a Postgres read-only connection (DB_URL env var) so the analysis code can query " +
-    "dataset_records WHERE raw_upload_id = rawUploadId via psycopg2. " +
-    "Writes the output envelope to analysis_artifacts and returns it along with the code that ran. " +
-    "Always pass rawUploadId (not csvUrl) — analysis reads from Postgres, not Storage. " +
-    "Requires executeTransform to have run first to populate dataset_records.",
+    "Execute analysis Python code against the clean audience tables (audience_observations, " +
+    "audience_15min_agg, audience_day_agg). Injects DB_URL, ENDPOINT_ID, ORG_ID, and RAW_UPLOAD_ID " +
+    "as env vars. Scope rule: when ENDPOINT_ID is non-empty (API session), filter by " +
+    "endpoint_id + org_id to get the full dataset across all uploads for that sensor. " +
+    "When ENDPOINT_ID is empty (CSV session), filter by RAW_UPLOAD_ID instead. " +
+    "Writes the output envelope to analysis_artifacts. Never pass csvUrl — reads from Postgres only.",
   inputSchema: z.object({
-    rawUploadId: z.string().describe(
-      "raw_data_uploads.id — injected as RAW_UPLOAD_ID env var for the analysis code to filter dataset_records"
+    endPointId: z.string().optional().describe(
+      "end_points.id — injected as ENDPOINT_ID env var. When set, code scopes by endpoint_id + org_id."
     ),
-    orgId: z.string().describe("Organization ID"),
+    orgId: z.string().describe("Organization ID — injected as ORG_ID env var"),
     sessionId: z.string().describe("Session ID — used to link the written analysis_artifact"),
     code: z.string().describe(
-      "Analysis Python code. Must connect to Postgres via psycopg2 (DB_URL env var), " +
-      "query dataset_records WHERE raw_upload_id = os.environ['RAW_UPLOAD_ID'], " +
-      "and print a valid output envelope as the final stdout line."
+      "Analysis Python code. Must connect to Postgres via psycopg2 (DB_URL env var). " +
+      "Scope: if ENDPOINT_ID env var is set, filter by endpoint_id + org_id; else filter by org_id alone. " +
+      "Print a valid output envelope as the final stdout line."
     ),
     params: z.record(z.unknown()).optional().describe("Template parameters (thresholds, time windows, etc.)"),
     templateId: z.string().optional().describe("code_templates.id if running an approved template"),
@@ -142,7 +142,7 @@ export const executeAnalysisTool = createTool({
     code: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, orgId, sessionId, code, templateId } = context;
+    const { endPointId, orgId, sessionId, code, templateId } = context;
     const supabase = getSupabase();
 
     const sandbox = await Sandbox.create({ apiKey: process.env.E2B_API_KEY });
@@ -162,7 +162,8 @@ export const executeAnalysisTool = createTool({
         language: "python",
         envs: {
           DB_URL: dbUrl,
-          RAW_UPLOAD_ID: rawUploadId,
+          ENDPOINT_ID: endPointId ?? "",
+          ORG_ID: orgId,
         },
       });
 
@@ -211,7 +212,7 @@ export const executeAnalysisTool = createTool({
             org_id: orgId,
             session_id: sessionId,
             template_id: templateId ?? null,
-            raw_upload_id: rawUploadId,
+            raw_upload_id: null,
             html: typeof (envelope as Record<string, unknown>).html === "string"
               ? (envelope as Record<string, unknown>).html as string
               : null,

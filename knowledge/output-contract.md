@@ -202,25 +202,44 @@ The `queryData` tool runs exploration code to give the agent real statistics bef
 
 ```python
 import psycopg2, os, json
-import pandas as pd
+from datetime import date, datetime
+from decimal import Decimal
+
+def _j(o):
+    if isinstance(o, (date, datetime)): return o.isoformat()
+    if isinstance(o, Decimal): return float(o)
+    raise TypeError(type(o))
 
 conn = psycopg2.connect(os.environ["DB_URL"])
 cur = conn.cursor()
-cur.execute(
-    "SELECT data FROM dataset_records WHERE raw_upload_id = %s",
-    (os.environ["RAW_UPLOAD_ID"],),
-)
-rows = [r[0] for r in cur.fetchall()]
+
+# Scope rule — always apply before querying clean tables
+endpoint_id = os.environ.get("ENDPOINT_ID")
+org_id      = os.environ.get("ORG_ID")
+if endpoint_id:
+    cur.execute(
+        "SELECT date, total_paths, engaged_count FROM audience_day_agg "
+        "WHERE endpoint_id = %s AND org_id = %s ORDER BY date",
+        (endpoint_id, org_id),
+    )
+else:
+    # CSV session — no endpoint assigned
+    cur.execute(
+        "SELECT date, total_paths, engaged_count FROM audience_day_agg "
+        "WHERE endpoint_id IS NULL AND org_id = %s ORDER BY date",
+        (org_id,),
+    )
+
+rows = cur.fetchall()
 cur.close()
 conn.close()
-df = pd.DataFrame(rows)
+
 # ... compute statistics ...
 print(json.dumps({
-    "n_paths": 847,
-    "engagement_rate": 23.4,
-    "median_dwell_s": 18.4,
-    "summary": "847 clean paths. Engagement rate 23.4%. Median dwell 18.4s for non-ghost paths."
-}))
+    "n_days": len(rows),
+    "total_paths": sum(r[1] for r in rows),
+    "summary": f"{len(rows)} days of clean data. {sum(r[1] for r in rows)} total paths."
+}, default=_j))
 ```
 
 ### Rules

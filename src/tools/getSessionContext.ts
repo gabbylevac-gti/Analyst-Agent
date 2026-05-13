@@ -20,12 +20,21 @@ import { join } from "path";
 
 // ─── Date range helpers ────────────────────────────────────────────────────────
 
+function toLocalDateStr(isoTs: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(isoTs));
+}
+
 function eachDayInRange(start: string, end: string): string[] {
   const dates: string[] = [];
-  const current = new Date(start);
-  const endDate = new Date(end);
-  current.setUTCHours(0, 0, 0, 0);
-  endDate.setUTCHours(0, 0, 0, 0);
+  // Work in UTC-anchored midnight so date arithmetic is unambiguous.
+  // Both start and end are already YYYY-MM-DD local-date strings at this point.
+  const current = new Date(start + "T00:00:00Z");
+  const endDate = new Date(end + "T00:00:00Z");
   while (current <= endDate) {
     dates.push(current.toISOString().split("T")[0]);
     current.setUTCDate(current.getUTCDate() + 1);
@@ -233,18 +242,20 @@ export const getSessionContextTool = createTool({
     let storeLocationLinked = false;
     let endpointCategory: string | null = null;
     let endpointKnownInterference: string | null = null;
+    let endpointTimezone = "America/Toronto";
 
     const endPointId: string | undefined = sessionRecord?.end_point_id ?? undefined;
     if (endPointId) {
       const { data: epData } = await supabase
         .from("end_points")
-        .select("category, known_interference, store_locations(hours)")
+        .select("category, known_interference, timezone, store_locations(hours)")
         .eq("id", endPointId)
         .single();
 
       if (epData) {
         endpointCategory = epData.category ?? null;
         endpointKnownInterference = epData.known_interference ?? null;
+        endpointTimezone = (epData.timezone as string | null) ?? "America/Toronto";
         const loc = (epData.store_locations as unknown as { hours: Record<string, { open: number; close: number }> | null } | null);
         storeLocationLinked = !!loc;
         if (loc?.hours && Object.keys(loc.hours).length > 0) {
@@ -306,20 +317,33 @@ export const getSessionContextTool = createTool({
     const sessionRangeEnd = sessionRecord?.range_end as string | null | undefined;
 
     if (sessionEndPointId && sessionRangeStart && sessionRangeEnd) {
-      // API session: query covered dates via audience_day_agg joined on endpoint_id
-      const rangeStartDate = sessionRangeStart.split("T")[0];
-      const rangeEndDate = sessionRangeEnd.split("T")[0];
+      // API session: coverage = did a successful raw_upload run for each day in the range?
+      // A day is "covered" if a raw_data_upload exists for this endpoint whose date_start <= day <= date_end.
+      // This is intentionally different from checking audience_day_agg rows per day — zero-path days
+      // (store closed, sensor offline) produce no agg row but the pipeline DID run for them.
+      // Checking agg rows would incorrectly show those days as gaps.
+      const rangeStartDate = toLocalDateStr(sessionRangeStart, endpointTimezone);
+      const rangeEndDate   = toLocalDateStr(sessionRangeEnd, endpointTimezone);
 
-      const { data: coveredRows } = await supabase
-        .from("audience_day_agg")
-        .select("date, raw_data_uploads!inner(endpoint_id)")
-        .eq("raw_data_uploads.endpoint_id", sessionEndPointId)
+      const { data: uploads } = await supabase
+        .from("raw_data_uploads")
+        .select("date_start, date_end")
+        .eq("endpoint_id", sessionEndPointId)
         .eq("org_id", orgId)
-        .gte("date", rangeStartDate)
-        .lte("date", rangeEndDate);
+        .not("date_start", "is", null)
+        .not("date_end", "is", null);
 
-      const coveredSet = new Set<string>((coveredRows ?? []).map((r) => r.date as string));
       const expectedDates = eachDayInRange(rangeStartDate, rangeEndDate);
+      const coveredSet = new Set<string>();
+      for (const d of expectedDates) {
+        for (const u of uploads ?? []) {
+          if ((u.date_start as string) <= d && (u.date_end as string) >= d) {
+            coveredSet.add(d);
+            break;
+          }
+        }
+      }
+
       const missingDates = expectedDates.filter((d) => !coveredSet.has(d));
       const missingRanges = contiguousRanges(missingDates);
 
@@ -376,6 +400,10 @@ export const getSessionContextTool = createTool({
         if (linkedDataset.approval_status === "approved" && linkedDataset.data_dictionary_json) {
           dataDictionary = linkedDataset;
         }
+      } else {
+        // Dataset was deleted — clear the stale ID so it isn't passed to executeTransform
+        // and causes a FK constraint violation.
+        activeDatasetId = undefined;
       }
     }
 

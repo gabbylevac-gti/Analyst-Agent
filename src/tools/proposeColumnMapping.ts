@@ -81,7 +81,11 @@ export const proposeColumnMappingTool = createTool({
     "Compare CSV column headers against approved data dictionaries for this org. " +
     "Returns a mapping proposal per column (best match + confidence + alternatives). " +
     "Call this immediately after a CSV upload is detected. " +
-    "Emit the result as a csv_mapping artifact and wait for [Mapping confirmed] before calling executeTransform.",
+    "Emit the result as a csv_mapping artifact. " +
+    "CRITICAL: After emitting the artifact, send ZERO text. The mapping card UI handles all user interaction. " +
+    "NEVER narrate the mappings, generate a markdown table, describe what was found, summarize the dictionary match, " +
+    "or produce a pre-written [Mapping confirmed: ...] message for the user to copy-paste. " +
+    "The card is self-explanatory. Wait silently for [Mapping confirmed: <json>] or [Mapping rejected].",
   inputSchema: z.object({
     orgId: z.string().describe("Organization ID"),
     csvColumns: z
