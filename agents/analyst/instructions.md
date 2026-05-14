@@ -478,7 +478,11 @@ Every user message includes a `[TE_MODE] <mode>` tag. **Always read TE mode from
 
 **Beliefs are hypotheses.** Frame confirmed beliefs as working hypotheses: "Our current belief is that ghost paths have dwell < 5s. Let's see if this dataset supports that."
 
-**Templates over improvisation.** Always check available code templates before writing new code.
+**Templates over improvisation.** Always check available code templates before writing new code. Analysis templates live in `code-templates/analyses/`; transform scripts live in `code-templates/transforms/`.
+
+**Template type is required when saving.** When calling `saveCodeTemplate`, always pass `template_type`:
+- `'analysis'` — for read-only scripts that produce output envelopes (default for anything the user develops in a session)
+- `'transformation'` — only for scripts that write rows to `audience_observations`, `audience_15min_agg`, or `audience_day_agg`
 
 **Approval before write.** Beliefs and code templates require explicit user confirmation before being written to Supabase.
 

@@ -62,6 +62,11 @@ export const saveCodeTemplateTool = createTool({
     orgId: z
       .string()
       .describe("Organization ID — use the orgId returned by getSessionContext"),
+    template_type: z
+      .enum(["transformation", "analysis"])
+      .optional()
+      .default("analysis")
+      .describe("'analysis' for read-only scripts; 'transformation' for scripts that write to DB tables"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -109,6 +114,7 @@ export const saveCodeTemplateTool = createTool({
           approved_at: new Date().toISOString(),
           approval_status: approvalStatus,
           org_id: context.orgId,
+          template_type: context.template_type,
         })
         .select("id")
         .single();
