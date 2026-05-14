@@ -151,6 +151,27 @@ export const getSessionContextTool = createTool({
       coveredDates: z.array(z.string()),
       missingRanges: z.array(z.object({ start: z.string(), end: z.string() })),
     }),
+    scope: z.object({
+      regions: z.array(z.string()),
+      locations: z.array(z.object({ id: z.string(), name: z.string() })),
+      endpoints: z.array(z.object({ id: z.string(), name: z.string() })),
+      data_sources: z.array(z.string()),
+      date_range: z.object({ start: z.string(), end: z.string() }).nullable(),
+      approved: z.boolean(),
+      approved_at: z.string().nullable(),
+    }).nullable(),
+    scopeApproved: z.boolean(),
+    endpointCoverage: z.array(z.object({
+      endpointId: z.string(),
+      endpointName: z.string(),
+      locationName: z.string(),
+      cleanDataSummary: z.object({
+        coveredDays: z.number(),
+        totalDays: z.number(),
+        coveragePercent: z.number(),
+        missingRanges: z.array(z.object({ start: z.string(), end: z.string() })),
+      }),
+    })).nullable(),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -178,7 +199,7 @@ export const getSessionContextTool = createTool({
     // ── Fetch session record once — org_id scopes all subsequent reads/writes ─
     const { data: sessionRecord } = await supabase
       .from("sessions")
-      .select("csv_storage_path, csv_public_url, org_id, user_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id, technical_engagement")
+      .select("csv_storage_path, csv_public_url, org_id, user_id, end_point_id, range_start, range_end, phase, objective, active_dataset_id, raw_upload_id, technical_engagement, scope")
       .eq("id", resolvedSessionId)
       .single();
 
@@ -203,6 +224,9 @@ export const getSessionContextTool = createTool({
         endpointKnownInterference: null,
         technicalEngagement: null,
         cleanDataSummary: { available: false, coveragePercent: 0, coveredDates: [], missingRanges: [] },
+        scope: null,
+        scopeApproved: false,
+        endpointCoverage: null,
       };
     }
 
@@ -376,7 +400,87 @@ export const getSessionContextTool = createTool({
       }
     }
 
-    // ── 6. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
+    // ── 6. Session scope — read the approved access policy ────────────────────
+    type ScopeLocation = { id: string; name: string };
+    type ScopeEndpoint = { id: string; name: string };
+    type SessionScope = {
+      regions: string[];
+      locations: ScopeLocation[];
+      endpoints: ScopeEndpoint[];
+      data_sources: string[];
+      date_range: { start: string; end: string } | null;
+      approved: boolean;
+      approved_at: string | null;
+    };
+
+    const rawScope = sessionRecord?.scope as SessionScope | null | undefined;
+    const sessionScope: SessionScope | null = rawScope ?? null;
+    const scopeApproved = sessionScope?.approved === true;
+
+    // Per-endpoint coverage — computed for each endpoint in the approved scope.
+    // Uses the same raw_data_uploads coverage logic as the single-endpoint path.
+    type EndpointCoverageEntry = {
+      endpointId: string;
+      endpointName: string;
+      locationName: string;
+      cleanDataSummary: {
+        coveredDays: number;
+        totalDays: number;
+        coveragePercent: number;
+        missingRanges: Array<{ start: string; end: string }>;
+      };
+    };
+
+    let endpointCoverage: EndpointCoverageEntry[] | null = null;
+
+    if (scopeApproved && sessionScope && sessionScope.endpoints.length > 0 && sessionScope.date_range) {
+      const { start: scopeStart, end: scopeEnd } = sessionScope.date_range;
+      const coverageResults: EndpointCoverageEntry[] = [];
+
+      for (const ep of sessionScope.endpoints) {
+        const { data: uploads } = await supabase
+          .from("raw_data_uploads")
+          .select("date_start, date_end")
+          .eq("endpoint_id", ep.id)
+          .eq("org_id", orgId)
+          .not("date_start", "is", null)
+          .not("date_end", "is", null);
+
+        const expectedDates = eachDayInRange(scopeStart, scopeEnd);
+        const coveredSet = new Set<string>();
+        for (const d of expectedDates) {
+          for (const u of uploads ?? []) {
+            if ((u.date_start as string) <= d && (u.date_end as string) >= d) {
+              coveredSet.add(d);
+              break;
+            }
+          }
+        }
+
+        const missingDates = expectedDates.filter((d) => !coveredSet.has(d));
+
+        // Find the location name for this endpoint from the scope
+        const matchingLoc = sessionScope.locations.find((l) =>
+          sessionScope.endpoints.some((e) => e.id === ep.id)
+        );
+
+        coverageResults.push({
+          endpointId: ep.id,
+          endpointName: ep.name,
+          locationName: matchingLoc?.name ?? "",
+          cleanDataSummary: {
+            coveredDays: coveredSet.size,
+            totalDays: expectedDates.length,
+            coveragePercent: expectedDates.length === 0 ? 0 : Math.round((coveredSet.size / expectedDates.length) * 100),
+            missingRanges: contiguousRanges(missingDates),
+          },
+        });
+      }
+
+      endpointCoverage = coverageResults;
+    }
+
+    // ── 7. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
     let dataDictionary = undefined;
     let datasetApprovalStatus: "none" | "pending" | "approved" = "none";
     let activeDatasetId: string | undefined = sessionRecord?.active_dataset_id ?? undefined;
@@ -452,6 +556,9 @@ export const getSessionContextTool = createTool({
       endpointKnownInterference,
       technicalEngagement,
       cleanDataSummary,
+      scope: sessionScope,
+      scopeApproved,
+      endpointCoverage,
     };
   },
 });

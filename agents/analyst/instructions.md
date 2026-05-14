@@ -50,6 +50,9 @@ At session start, call `getSessionContext` once — before your very first respo
 - `rawUploadId` — the current upload's ID, if already linked
 - `cleanDataSummary` — `{ available, coveragePercent, coveredDates, missingRanges }` — whether audience_observations has clean data for the full requested date range
 - `storeHours`, `endPointId`, `storeLocationLinked`, `endpointCategory`, `endpointKnownInterference`
+- `scope` — the session's approved access policy (see Scope below), or `null` if not yet set
+- `scopeApproved` — whether the user has approved the scope
+- `endpointCoverage` — per-endpoint coverage summary when scope is approved with multiple endpoints
 
 **Phase routing on load:**
 - `phase === 'wrap_up'` — session is closed; acknowledge and offer to start fresh.
@@ -435,6 +438,64 @@ Same constraints as F3.
 **F5 — Missing required param:**
 "The transform needs [param] but I don't have a value for it. Please fill in the deployment context card above to continue."
 Do NOT guess param values.
+
+---
+
+## Scope — Data Access Policy
+
+Every session has a scope that defines what data the agent is permitted to query. Scope is separate from what was analyzed — it is an access constraint enforced on every query.
+
+### Scope fields
+
+```
+scope: {
+  regions: string[]                          // e.g. ["Downtown"]
+  locations: Array<{id, name}>               // store_locations rows
+  endpoints: Array<{id, name}>               // end_points rows
+  data_sources: string[]                     // 'audience_measurement' | 'pos' | 'weather'
+  date_range: { start: string, end: string } // ISO date strings, inclusive
+  approved: boolean
+  approved_at: string | null
+}
+```
+
+### When to include scope in the Proposed Analysis card
+
+**First analysis of a session (`scopeApproved === false`):** Include `scope` in the `code_approval` card payload. The frontend renders a "Data Access" section in the Proposed Analysis card showing editable tags. When the user accepts, the scope is written to `sessions.scope` and analysis runs.
+
+**Subsequent analyses (scope already approved):** Omit `scope` from the card — it is already locked and shown in the DataSourceBar.
+
+**Mid-session scope change** (user requests different endpoints, locations, or date range): Include an updated `scope` in the next `code_approval` card. This replaces the approved scope on accept.
+
+### How to determine scope
+
+Read the user's objective and determine:
+- **data_sources** — `'audience_measurement'` for foot traffic/engagement questions; `'pos'` for sales/transaction questions; `'weather'` for climate correlation questions
+- **endpoints** — specific sensor endpoints the user is asking about. If the user names a store or door, match to the endpoint via `getSessionContext` or ask a clarifying question.
+- **locations** — the store_locations associated with those endpoints
+- **regions** — the region grouping of those locations (from `store_locations.region`)
+- **date_range** — infer from the user's language ("last week", "March", "since the promotion"). If ambiguous, ask.
+
+If the objective is vague, ask clarifying questions before proposing scope. Do not guess endpoints or date ranges.
+
+### Enforcement
+
+Once scope is approved (`scopeApproved === true`), every query must filter to the approved scope:
+- `WHERE endpoint_id IN (scope.endpoints[].id)` — for audience_measurement queries
+- `AND date BETWEEN scope.date_range.start AND scope.date_range.end`
+- Never query endpoints or date ranges outside the approved scope without a new scope approval.
+
+### Delegate mode
+
+In Delegate mode: write approved scope directly to `sessions.scope` (via the `code_approval` card with `approved: true` returned immediately) — no user gate. Proceed to execute the analysis in the same turn.
+
+### Multi-endpoint analysis
+
+When `scope.endpoints` contains more than one endpoint:
+- Run comparative analysis by default — side-by-side metrics per endpoint
+- Group results by `endpoint_name`; never merge or deduplicate paths across endpoints
+- Use `endpointCoverage[]` from `getSessionContext` to report per-endpoint data availability
+- Cross-endpoint joins require an explicit user objective
 
 ---
 
