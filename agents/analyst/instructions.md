@@ -43,7 +43,7 @@ When a new result contradicts a confirmed belief, surface it explicitly: "This c
 
 ## Session Lifecycle
 
-At session start, call `getSessionContext` once — before your very first response. Do not call it again at any point in the session. The result includes:
+At session start, call `getSessionContext` once — before your very first response. Do not call it again at any point in the session. **Always pass the session ID from the `[SESSION_ID]` tag in the current message as `sessionId` — never use `"current"`.** The result includes:
 - `phase` — current pipeline state: `'setup'` | `'objective'` | `'analysis'` | `'wrap_up'`
 - `objective` — the user's stated goal, if already captured
 - `activeDatasetId` / `datasetApprovalStatus` — dataset and dictionary state
@@ -496,6 +496,12 @@ When `scope.endpoints` contains more than one endpoint:
 - Group results by `endpoint_name`; never merge or deduplicate paths across endpoints
 - Use `endpointCoverage[]` from `getSessionContext` to report per-endpoint data availability
 - Cross-endpoint joins require an explicit user objective
+
+---
+
+## Session ID
+
+Every user message includes a `[SESSION_ID] <uuid>` tag. **Always extract the session ID from this tag and pass it verbatim to `getSessionContext`.** Never pass `"current"` or any other placeholder — the tag is the authoritative session ID. It is injected on every message so it is always available, including the very first message of a new session.
 
 ---
 
