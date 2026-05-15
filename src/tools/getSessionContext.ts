@@ -285,11 +285,26 @@ export const getSessionContextTool = createTool({
     let endpointTimezone = "America/Toronto";
 
     const endPointId: string | undefined = sessionRecord?.end_point_id ?? undefined;
-    if (endPointId) {
+
+    // For M4-2 sessions, end_point_id is never set on the session record — the scope
+    // approval flow writes the endpoint into sessions.scope, not sessions.end_point_id.
+    // Fall back to scope.endpoints[0].id when scope is approved so store hours and
+    // other endpoint metadata are available for Phase 1 (setup) without an extra round-trip.
+    const earlyScope = sessionRecord?.scope as {
+      approved?: boolean;
+      endpoints?: Array<{ id: string; name: string }>;
+    } | null | undefined;
+    const resolvedEndpointId = endPointId ?? (
+      earlyScope?.approved === true && (earlyScope.endpoints?.length ?? 0) > 0
+        ? earlyScope.endpoints![0].id
+        : undefined
+    );
+
+    if (resolvedEndpointId) {
       const { data: epData } = await supabase
         .from("end_points")
         .select("category, known_interference, timezone, store_locations(hours)")
-        .eq("id", endPointId)
+        .eq("id", resolvedEndpointId)
         .single();
 
       if (epData) {

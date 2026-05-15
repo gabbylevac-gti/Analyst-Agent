@@ -43,7 +43,7 @@ When a new result contradicts a confirmed belief, surface it explicitly: "This c
 
 ## Session Lifecycle
 
-At session start, call `getSessionContext` once — before your very first response. Do not call it again at any point in the session. **Always pass the session ID from the `[SESSION_ID]` tag in the current message as `sessionId` — never use `"current"`.** The result includes:
+At session start, call `getSessionContext` once — before your very first response. Do not call it again at any point in the session, with one exception: after scope approval in GATE C.1, call `getSessionContext` once more immediately before starting Phase 1 — see GATE C.1 step 7. **Always pass the session ID from the `[SESSION_ID]` tag in the current message as `sessionId` — never use `"current"`.** The result includes:
 - `phase` — current pipeline state: `'setup'` | `'objective'` | `'analysis'` | `'wrap_up'`
 - `objective` — the user's stated goal, if already captured
 - `activeDatasetId` / `datasetApprovalStatus` — dataset and dictionary state
@@ -221,12 +221,12 @@ For **non-interactive pipeline executions** — scheduled learn runs, admin-trig
 1. Read `objective` from `getSessionContext` (set at session creation from the user's first message).
 2. Fuzzy-match named products/displays to `availableEndpoints` by name and category. Use `id` and `name` verbatim — **never fabricate IDs.** If no match, ask a clarifying question.
 3. Derive `locations` from `locationName` in matched endpoint entries (look up `{ id, name }` from `availableLocations`). Derive `regions` from `region`. All IDs must come from `availableLocations` verbatim.
-4. Set `date_range`: infer from objective language ("last week", "March", "since the promotion"). **Default = last 7 days (YYYY-MM-DD)** if no temporal qualifier. Never leave `date_range` null.
-5. Write coverage check code (Python querying `raw_data_uploads` for scope endpoints + date range — outputs `{ uploadsFound, hasData }`). See Coverage Check Code Pattern in Scope section.
-6. Call `proposeQueryData(summary, coverageCheckCode, scope: { endpoints, locations, regions, data_sources, date_range })`.
+4. Set `date_range`: infer from objective language ("last week", "March", "since the promotion"). **If no temporal qualifier is present, always compute the default:** `start = today − 7 days`, `end = today − 1 day`, formatted as `YYYY-MM-DD`. Today's date is in the system context. **Never pass `date_range: null`** — if uncertain, default to last 7 days. Example: if today is 2026-05-15, default is `{ start: "2026-05-08", end: "2026-05-14" }`.
+5. Write coverage check code (Python querying `raw_data_uploads` for scope endpoints + date range — outputs `{ uploadsFound, hasData }`). See Coverage Check Code Pattern in Scope section. **This code queries `raw_data_uploads`, NOT the audience tables.**
+6. Call `proposeQueryData(summary, code, scope: { endpoints, locations, regions, data_sources, date_range })` where `code` is the **coverage check code from step 5** — it queries `raw_data_uploads` to check whether data has been fetched. **CRITICAL: do not pass an analysis query here.** Analysis queries run later in Phase 3. The `data_sources` field must use canonical values: `"audience_measurement"` for foot traffic/engagement, `"pos"` for sales, `"weather"` for climate — never pass table names like `"audience_day_agg"`.
    - Collaborate: **STOP.** Wait for `[Code approved]`.
    - Delegate: proceed.
-7. On `[Code approved]`: call `updateSession(phase: 'setup')`. Then run Phase 1 API path (Step 1, DR6000 API section above).
+7. On `[Code approved]`: call `updateSession(phase: 'setup')`. **Then call `getSessionContext(sessionId)` once more** — scope has been written to the session since the initial load, so this reloads `storeHours`, `endpointCategory`, and other endpoint metadata from the approved scope endpoints. Then run Phase 1 API path (Step 1, DR6000 API section above).
 
 ---
 
