@@ -172,6 +172,19 @@ export const getSessionContextTool = createTool({
         missingRanges: z.array(z.object({ start: z.string(), end: z.string() })),
       }),
     })).nullable(),
+    availableEndpoints: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      locationName: z.string().nullable(),
+      region: z.string().nullable(),
+      category: z.string().nullable(),
+    })).nullable(),
+    availableLocations: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      region: z.string().nullable(),
+    })).nullable(),
+    availableRegions: z.array(z.string()).nullable(),
   }),
   execute: async (context, toolContext) => {
     const { sessionId, csvColumnSignature, beliefTags } = context;
@@ -227,6 +240,9 @@ export const getSessionContextTool = createTool({
         scope: null,
         scopeApproved: false,
         endpointCoverage: null,
+        availableEndpoints: null,
+        availableLocations: null,
+        availableRegions: null,
       };
     }
 
@@ -311,7 +327,8 @@ export const getSessionContextTool = createTool({
       .order("approved_at", { ascending: false })
       .limit(20);
 
-    if (orgId) templatesQuery = templatesQuery.eq("org_id", orgId);
+    // Include both org-specific and global (org_id IS NULL) templates.
+    if (orgId) templatesQuery = templatesQuery.or(`org_id.eq.${orgId},org_id.is.null`);
     const { data: codeTemplates } = await templatesQuery;
 
     // ── 4. Session summaries (3 most recent, excluding current, scoped to org) ─
@@ -480,7 +497,48 @@ export const getSessionContextTool = createTool({
       endpointCoverage = coverageResults;
     }
 
-    // ── 7. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
+    // ── 7. Available endpoints + locations (for scope proposal when scope is null) ──
+    let availableEndpoints: Array<{ id: string; name: string; locationName: string | null; region: string | null; category: string | null }> | null = null;
+    let availableLocations: Array<{ id: string; name: string; region: string | null }> | null = null;
+    let availableRegions: string[] | null = null;
+
+    if (orgId) {
+      const { data: orgEndpoints } = await supabase
+        .from("end_points")
+        .select("id, end_point, category, store_locations(id, store_name, region)")
+        .eq("org_id", orgId)
+        .eq("dr_radar", true)
+        .order("end_point");
+
+      availableEndpoints = (orgEndpoints ?? []).map((ep) => {
+        const loc = (ep.store_locations as unknown as { store_name: string; region: string | null } | null);
+        return {
+          id: ep.id as string,
+          name: ep.end_point as string,
+          locationName: loc?.store_name ?? null,
+          region: loc?.region ?? null,
+          category: (ep.category as string | null) ?? null,
+        };
+      });
+
+      const { data: orgLocations } = await supabase
+        .from("store_locations")
+        .select("id, store_name, region")
+        .eq("org_id", orgId)
+        .order("store_name");
+
+      availableLocations = (orgLocations ?? []).map((l) => ({
+        id: l.id as string,
+        name: l.store_name as string,
+        region: (l.region as string | null) ?? null,
+      }));
+
+      availableRegions = [...new Set(
+        (orgLocations ?? []).map((l) => l.region as string | null).filter((r): r is string => !!r)
+      )];
+    }
+
+    // ── 8. Data dictionary — prefer session's active_dataset_id, fall back to column signature ──
     let dataDictionary = undefined;
     let datasetApprovalStatus: "none" | "pending" | "approved" = "none";
     let activeDatasetId: string | undefined = sessionRecord?.active_dataset_id ?? undefined;
@@ -559,6 +617,9 @@ export const getSessionContextTool = createTool({
       scope: sessionScope,
       scopeApproved,
       endpointCoverage,
+      availableEndpoints,
+      availableLocations,
+      availableRegions,
     };
   },
 });

@@ -52,6 +52,9 @@ At session start, call `getSessionContext` once — before your very first respo
 - `storeHours`, `endPointId`, `storeLocationLinked`, `endpointCategory`, `endpointKnownInterference`
 - `scope` — the session's approved access policy (see Scope below), or `null` if not yet set
 - `scopeApproved` — whether the user has approved the scope
+- `availableEndpoints` — list of all org endpoints: `{ id, name, locationName, region, category }`. Use this to resolve display names to endpoint IDs when proposing scope.
+- `availableLocations` — list of all org store locations: `{ id, name, region }`
+- `availableRegions` — list of distinct region strings for the org
 - `endpointCoverage` — per-endpoint coverage summary when scope is approved with multiple endpoints
 
 **Phase routing on load:**
@@ -469,14 +472,18 @@ scope: {
 
 ### How to determine scope
 
+`getSessionContext` returns `availableEndpoints`, `availableLocations`, and `availableRegions` — the full list of org endpoints and locations. Use these to match the user's objective to specific IDs.
+
 Read the user's objective and determine:
 - **data_sources** — `'audience_measurement'` for foot traffic/engagement questions; `'pos'` for sales/transaction questions; `'weather'` for climate correlation questions
-- **endpoints** — specific sensor endpoints the user is asking about. If the user names a store or door, match to the endpoint via `getSessionContext` or ask a clarifying question.
-- **locations** — the store_locations associated with those endpoints
-- **regions** — the region grouping of those locations (from `store_locations.region`)
-- **date_range** — infer from the user's language ("last week", "March", "since the promotion"). If ambiguous, ask.
+- **endpoints** — match the user's named product/display/door to an endpoint in `availableEndpoints` by name (fuzzy match on `name` and `category`). Include `{ id, name }` from that entry. If the user says "ego mower", find the endpoint whose `name` or `category` contains "mower" or "ego". If no match is found, ask a clarifying question — do not guess.
+- **locations** — use `locationName` and `region` from the matched endpoint entries. Include `{ id, name }` from `availableLocations` for those stores.
+- **regions** — the `region` value from the matched endpoint entries.
+- **date_range** — infer from the user's language ("last week", "March", "since the promotion"). Default to the last 7 days if the user doesn't specify. Use ISO date strings (`YYYY-MM-DD`).
 
-If the objective is vague, ask clarifying questions before proposing scope. Do not guess endpoints or date ranges.
+If the objective names a display or sensor that cannot be matched to any entry in `availableEndpoints`, ask a clarifying question. If `availableEndpoints` is null or empty, ask which endpoint to use.
+
+**Never ask the user for an endpoint ID.** Always resolve the name to an ID using `availableEndpoints`.
 
 ### Enforcement
 
