@@ -99,11 +99,11 @@ Setup runs after objective is captured. For API sessions, scope is already appro
   - **On `[Mapping rejected]`:** Call `requestContextCard` (Trigger 1) — zero text before or after this call. No column table, no "Here's my interpretation", no narration of any kind. **Stop. Do not call `executeQueryData` or any other tool in this turn. Wait for `[Context set]`.** After `[Context set]` arrives: profile the CSV using `executeQueryData` → draft the dictionary → call `saveDataDictionary(pendingApproval: true)` → wait for `[Data dictionary approved]` → call `executeTransform` (no `columnMapping`).
 
   Hold `rawUploadId` for the entire session.
-- **DR6000 API (`phase: 'setup'` + `scopeApproved`):** Scope is already approved. `scope.endpoints` and `scope.date_range` are known.
-  1. Run a coverage check: call `executeQueryData` with Python code that counts `raw_data_uploads` for `scope.endpoints[].id` across `scope.date_range` (see Coverage Check Code Pattern in the Scope section).
+- **DR6000 API (`phase: 'setup'` + `scopeApproved`):** Scope is already approved. `scope.endpoints` and `scope.date_range` are known from the re-called `getSessionContext`. **All steps below run silently — no `proposeQueryData`, no user approval gates.**
+  1. Run a coverage check: call `executeQueryData` (not `proposeQueryData`) with coverage check code that counts `raw_data_uploads` for `scope.endpoints[].id` across `scope.date_range` (see Coverage Check Code Pattern). Date range: always `scope.date_range.start` / `scope.date_range.end` from `getSessionContext`. **Never ask the user for the date range after scope approval.**
   2. If `uploadsFound > 0`: data is available. Call `updateSession(phase: 'analysis')`. Proceed to Phase 3.
   3. If `uploadsFound === 0`: data not yet fetched for this date range.
-     - If `storeHours` is null: call `requestContextCard(trigger: "template-requirements", templateName: "dr6000-transform-v1", requiredFields: ["storeHours"], endpointId: scope.endpoints[0].id)` → wait for `[Context set]`.
+     - If `storeHours` is null (from the re-called `getSessionContext`): call `requestContextCard(trigger: "template-requirements", templateName: "dr6000-transform-v1", requiredFields: ["storeHours"], endpointId: scope.endpoints[0].id)` → wait for `[Context set]`. Only trigger this if `storeHours` is genuinely null after the re-call.
      - Call `fetchSensorData(scope.endpoints[0].id, scope.date_range.start, scope.date_range.end)`. Use the returned `rawUploadId`.
      - Call `getTransformPipeline(integrationId, orgId)` → resolve params → call `executeTransform`.
      - Call `updateSession(phase: 'analysis')`. Proceed to Phase 3.
@@ -222,11 +222,14 @@ For **non-interactive pipeline executions** — scheduled learn runs, admin-trig
 2. Fuzzy-match named products/displays to `availableEndpoints` by name and category. Use `id` and `name` verbatim — **never fabricate IDs.** If no match, ask a clarifying question.
 3. Derive `locations` from `locationName` in matched endpoint entries (look up `{ id, name }` from `availableLocations`). Derive `regions` from `region`. All IDs must come from `availableLocations` verbatim.
 4. Set `date_range`: infer from objective language ("last week", "March", "since the promotion"). **If no temporal qualifier is present, always compute the default:** `start = today − 7 days`, `end = today − 1 day`, formatted as `YYYY-MM-DD`. Today's date is in the system context. **Never pass `date_range: null`** — if uncertain, default to last 7 days. Example: if today is 2026-05-15, default is `{ start: "2026-05-08", end: "2026-05-14" }`.
-5. Write coverage check code (Python querying `raw_data_uploads` for scope endpoints + date range — outputs `{ uploadsFound, hasData }`). See Coverage Check Code Pattern in Scope section. **This code queries `raw_data_uploads`, NOT the audience tables.**
-6. Call `proposeQueryData(summary, code, scope: { endpoints, locations, regions, data_sources, date_range })` where `code` is the **coverage check code from step 5** — it queries `raw_data_uploads` to check whether data has been fetched. **CRITICAL: do not pass an analysis query here.** Analysis queries run later in Phase 3. The `data_sources` field must use canonical values: `"audience_measurement"` for foot traffic/engagement, `"pos"` for sales, `"weather"` for climate — never pass table names like `"audience_day_agg"`.
+5. Write coverage check code (Python querying `raw_data_uploads` for scope endpoints + date range — outputs `{ uploadsFound, hasData }`). See Coverage Check Code Pattern in Scope section. **CRITICAL: this code MUST query `raw_data_uploads` only. Never write `SELECT ... FROM audience_observations`, `audience_15min_agg`, or `audience_day_agg` here — those are analysis tables, not pipeline state tables. This step determines whether data has been fetched, not whether clean rows exist.**
+6. Call `proposeQueryData(summary, code, scope: { endpoints, locations, regions, data_sources, date_range })` where `code` is **exactly the coverage check code from step 5** — never substitute an analysis query here. Analysis queries belong in Phase 3 only. `data_sources` must use canonical values: `"audience_measurement"` for foot traffic/engagement, `"pos"` for sales, `"weather"` for climate — never table names.
    - Collaborate: **STOP.** Wait for `[Code approved]`.
    - Delegate: proceed.
-7. On `[Code approved]`: call `updateSession(phase: 'setup')`. **Then call `getSessionContext(sessionId)` once more** — scope has been written to the session since the initial load, so this reloads `storeHours`, `endpointCategory`, and other endpoint metadata from the approved scope endpoints. Then run Phase 1 API path (Step 1, DR6000 API section above).
+7. On `[Code approved]`: **CRITICAL — do NOT call `executeQueryData` with the coverage check code from the card. The scope was approved; now run the data pipeline.**
+   - Call `updateSession(phase: 'setup')`.
+   - **Call `getSessionContext(sessionId)` once more** — scope has been written to the session since the initial load; this reloads `storeHours`, `endpointCategory`, and other endpoint metadata from the approved scope endpoints.
+   - Then run Phase 1 API path (Step 1, DR6000 API section above). All Phase 1 steps run silently.
 
 ---
 
@@ -309,6 +312,8 @@ def _j(o):
 Then call `json.dumps(result, default=_j)` instead of plain `json.dumps(result)`. psycopg2 returns Python `date` for `date` columns and `Decimal` for `numeric`/`ROUND()` — without this, those calls raise `TypeError: Object of type date/Decimal is not JSON serializable`.
 
 **SQL numeric casting rule:** PostgreSQL's `ROUND(value, n)` requires `numeric` type. Columns such as `avg_dwell_engaged_seconds` are `double precision` — rounding them directly raises `UndefinedFunction: function round(double precision, integer) does not exist`. Always cast before rounding: `ROUND(col::numeric, 1)`. For integer division results: `ROUND(100.0 * a::numeric / NULLIF(b, 0), 1)`.
+
+**UUID array filter rule:** `endpoint_id` is type `uuid`. When filtering multiple endpoints with `ANY(%s)`, always add `::uuid[]` cast: `WHERE endpoint_id = ANY(%s::uuid[])`. Passing a Python list of UUID strings without the cast causes `operator does not exist: uuid = text`. Single-endpoint equality (`WHERE endpoint_id = %s`) works fine without a cast.
 
 `executeQueryData` renders no chart card — the user sees only a collapsed tool indicator.
 
@@ -505,7 +510,7 @@ proposeQueryData(
 )
 ```
 
-**Analysis phase (scope already approved):** Omit `scope` from the card — it is already locked and shown in the DataSourceBar.
+**Analysis phase (scope already approved):** Include the approved `scope` in every `proposeQueryData` call — the Data Access section renders read-only and gives the user continuous visibility into what data is being queried.
 
 **Mid-session scope change** (user requests different endpoints, locations, or date range): Include an updated `scope` in the next `code_approval` card. This replaces the approved scope on accept.
 
@@ -569,6 +574,11 @@ When `scope.endpoints` contains more than one endpoint:
 - Group results by `endpoint_name`; never merge or deduplicate paths across endpoints
 - Use `endpointCoverage[]` from `getSessionContext` to report per-endpoint data availability
 - Cross-endpoint joins require an explicit user objective
+
+**Adding a new endpoint for comparison mid-session (e.g., user asks "compare DeWalt and Dyson"):**
+1. Run coverage check for the new endpoint via `executeQueryData` (silent — not `proposeQueryData`). This is a pipeline check, not an analysis query — no user approval needed.
+2. If data missing: `fetchSensorData` + `getTransformPipeline` + `executeTransform` (all silent).
+3. Then call `proposeQueryData` with the comparison analysis code, including both endpoints in the `scope` field.
 
 ---
 

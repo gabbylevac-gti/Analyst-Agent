@@ -372,19 +372,36 @@ export const getSessionContextTool = createTool({
     const sessionRangeStart = sessionRecord?.range_start as string | null | undefined;
     const sessionRangeEnd = sessionRecord?.range_end as string | null | undefined;
 
-    if (sessionEndPointId && sessionRangeStart && sessionRangeEnd) {
+    // For M4-2 scope sessions, end_point_id / range_* are never set on the session record.
+    // Fall back to scope.endpoints[0] + scope.date_range so cleanDataSummary reflects
+    // whether the pipeline has run for the approved scope — enables skipping Phase 1 on
+    // returning sessions where data is already in raw_data_uploads.
+    const scopeForCoverage = sessionRecord?.scope as {
+      approved?: boolean;
+      endpoints?: Array<{ id: string }>;
+      date_range?: { start: string; end: string } | null;
+    } | null | undefined;
+    const effectiveEndPointId = sessionEndPointId ?? (
+      scopeForCoverage?.approved === true && (scopeForCoverage.endpoints?.length ?? 0) > 0
+        ? scopeForCoverage.endpoints![0].id
+        : null
+    );
+    const effectiveRangeStart = sessionRangeStart ?? (scopeForCoverage?.date_range?.start ?? null);
+    const effectiveRangeEnd   = sessionRangeEnd   ?? (scopeForCoverage?.date_range?.end   ?? null);
+
+    if (effectiveEndPointId && effectiveRangeStart && effectiveRangeEnd) {
       // API session: coverage = did a successful raw_upload run for each day in the range?
       // A day is "covered" if a raw_data_upload exists for this endpoint whose date_start <= day <= date_end.
       // This is intentionally different from checking audience_day_agg rows per day — zero-path days
       // (store closed, sensor offline) produce no agg row but the pipeline DID run for them.
       // Checking agg rows would incorrectly show those days as gaps.
-      const rangeStartDate = toLocalDateStr(sessionRangeStart, endpointTimezone);
-      const rangeEndDate   = toLocalDateStr(sessionRangeEnd, endpointTimezone);
+      const rangeStartDate = toLocalDateStr(effectiveRangeStart, endpointTimezone);
+      const rangeEndDate   = toLocalDateStr(effectiveRangeEnd, endpointTimezone);
 
       const { data: uploads } = await supabase
         .from("raw_data_uploads")
         .select("date_start, date_end")
-        .eq("endpoint_id", sessionEndPointId)
+        .eq("endpoint_id", effectiveEndPointId)
         .eq("org_id", orgId)
         .not("date_start", "is", null)
         .not("date_end", "is", null);
