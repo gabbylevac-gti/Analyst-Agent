@@ -80,8 +80,9 @@ export const executeTransformTool = createTool({
     error: z.string().optional(),
   }),
   execute: async (context) => {
-    const { rawUploadId, orgId, templateId, params, endPointId, columnMapping } = context;
+    const { rawUploadId, orgId, templateId, endPointId, columnMapping } = context;
     let { datasetId } = context;
+    let params = context.params as Record<string, unknown> | undefined;
     const supabase = getSupabase();
 
     // ── 0a. Validate datasetId — guard against agent passing rawUploadId by mistake ─
@@ -118,6 +119,27 @@ export const executeTransformTool = createTool({
         classificationCounts: { engaged: 0, passer_by: 0 },
         summary: `Upload ${rawUploadId} already transformed (${existingObsCount} observations exist). Skipping re-transform.`,
       };
+    }
+
+    // ── 0c. Auto-resolve deployment_context params (store hours) from DB ─────
+    // When endPointId is provided, look up STORE_OPEN_HOUR / STORE_CLOSE_HOUR from
+    // end_points → store_locations(hours). This prevents the agent from needing to
+    // call requestContextCard for store hours — executeTransform is self-sufficient.
+    if (endPointId) {
+      const { data: ep } = await supabase
+        .from("end_points")
+        .select("store_locations(hours)")
+        .eq("id", endPointId)
+        .single();
+      const storeHoursArr = ep?.store_locations as Array<{ hours?: { open?: number; close?: number } }> | null;
+      const hours = storeHoursArr?.[0]?.hours;
+      if (hours) {
+        params = {
+          STORE_OPEN_HOUR: hours.open ?? 7,
+          STORE_CLOSE_HOUR: hours.close ?? 22,
+          ...(params ?? {}),
+        };
+      }
     }
 
     // ── 1. Fetch template code from code_templates ────────────────────────────

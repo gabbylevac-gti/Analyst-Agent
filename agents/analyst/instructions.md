@@ -103,9 +103,8 @@ Setup runs after objective is captured. For API sessions, scope is already appro
   1. Run a coverage check: call `executeQueryData` (not `proposeQueryData`) with coverage check code that counts `raw_data_uploads` for `scope.endpoints[].id` across `scope.date_range` (see Coverage Check Code Pattern). Date range: always `scope.date_range.start` / `scope.date_range.end` from `getSessionContext`. **Never ask the user for the date range after scope approval.**
   2. If `uploadsFound > 0`: data is available. Call `updateSession(phase: 'analysis')`. Proceed to Phase 3.
   3. If `uploadsFound === 0`: data not yet fetched for this date range.
-     - If `storeHours` is null (from the re-called `getSessionContext`): call `requestContextCard(trigger: "template-requirements", templateName: "dr6000-transform-v1", requiredFields: ["storeHours"], endpointId: scope.endpoints[0].id)` → wait for `[Context set]`. Only trigger this if `storeHours` is genuinely null after the re-call.
      - Call `fetchSensorData(scope.endpoints[0].id, scope.date_range.start, scope.date_range.end)`. Use the returned `rawUploadId`.
-     - Call `getTransformPipeline(integrationId, orgId)` → resolve params → call `executeTransform`.
+     - Call `getTransformPipeline(integrationId, orgId)` → call `executeTransform({ rawUploadId, orgId, templateId, endPointId })`. Do NOT pass `storeHours` in params — `executeTransform` auto-resolves store hours from the endpoint's store location record. Never call `requestContextCard` for storeHours.
      - Call `updateSession(phase: 'analysis')`. Proceed to Phase 3.
 
 #### Step 2 — Deployment context card
@@ -117,12 +116,7 @@ Call `requestContextCard` in two situations:
    - Say: "Before I draft the dictionary, I need to know which deployment this data came from. Please fill in the card above — I'll continue once you apply it." (This message applies to the Reject path only — on the Confirm path, no text is needed before calling executeTransform.)
    - **Hard gate: Do not call `executeQueryData`, `saveDataDictionary`, or `executeTransform` until `[Context set]` is received.** Profile and drafting begin only after `[Context set]`.
 
-2. **Store hours missing** — before running transform when `storeHours` is null:
-   - `requestContextCard(trigger: "template-requirements", sessionId, orgId, templateName: "dr6000-transform-v1", requiredFields: ["storeHours"], endpointId: <endPointId>)`
-   - Note: for CSV sessions where `endPointId` is not yet in `getSessionContext` (linked mid-session via the csv-upload card), omit `endpointId` — the card will show a store selector for the user to link the endpoint.
-   - If `storeHours` is already stored in the org config, use them directly — do not trigger the context card.
-   - Say: "The transform needs store hours to filter off-hours detections. Please fill in the card above — I'll continue once you set them."
-   - Wait for `[Context set]`.
+2. **Store hours missing** — `executeTransform` auto-resolves `STORE_OPEN_HOUR` / `STORE_CLOSE_HOUR` from the endpoint's store location record when `endPointId` is provided. **Never call `requestContextCard` for storeHours** — this is handled automatically by the tool. Simply call `executeTransform` with `endPointId` and it will resolve store hours from the DB. The only remaining case where `requestContextCard` is needed is CSV upload sessions where `endPointId` is not yet linked (the csv-upload card handles this).
 
 **When the user sends `[Context set]`:** Read values directly from the message. Do NOT ask Q1/Q2 as text questions — the card collected them.
 **When the user sends `[Context skipped]`:** Ask the sensor placement questions (Q1/Q2 below) as plain text.
@@ -512,6 +506,8 @@ proposeQueryData(
 
 **Analysis phase (scope already approved):** Include the approved `scope` in every `proposeQueryData` call — the Data Access section renders read-only and gives the user continuous visibility into what data is being queried.
 
+**When going directly to Phase 3 without GATE C.1** (e.g., `cleanDataSummary.available === true` from a prior session): build a scope object from what you know — endpoint(s), location, region, date range — and include it in `proposeQueryData`. Always include scope. Use `"audience_measurement"` (not table names like `audience_day_agg`) as the `data_sources` canonical value for foot traffic / engagement data. `data_sources` canonical values: `"audience_measurement"` (foot traffic / engagement), `"pos"` (sales), `"weather"` (climate).
+
 **Mid-session scope change** (user requests different endpoints, locations, or date range): Include an updated `scope` in the next `code_approval` card. This replaces the approved scope on accept.
 
 ### Coverage Check Code Pattern
@@ -594,16 +590,17 @@ Every user message includes a `[TE_MODE] <mode>` tag. **Always read TE mode from
 
 **delegate (null or 'delegate'):**
 - All technical gates auto-approved.
-- Step 1: Call `executeQueryData` directly. Do NOT call `proposeQueryData`.
+- Step 1: Call `executeQueryData` directly with `autoFetch: true`, `sessionId`, `dateRange`. Do NOT call `proposeQueryData`. If result has `autoFetchCompleted: true`, proceed to Step 3 immediately.
 - Step 3: Call `executeChart` directly after the belief statement.
 - User sees results and take-away cards.
 
 **collaborate ('collaborate'):**
-- Step 1: Before calling `executeQueryData`, call `proposeQueryData(summary, code)` first.
+- Step 1: Before calling `executeQueryData`, call `proposeQueryData(summary, code, scope)` first. Always include the approved `scope` (or the inferred scope if no GATE C.1 was run).
   - Then STOP. Do not call `executeQueryData` in the same turn.
-  - Wait for `[Code approved]` in the next user message. Then call `executeQueryData` with the exact same code.
+  - Wait for `[Code approved]` in the next user message. Then call `executeQueryData` with the exact same code and always include `autoFetch: true`, `sessionId: <current sessionId>`, `dateRange: { start: "YYYY-MM-DD", end: "YYYY-MM-DD" }`.
   - If the user sends `[Code edit requested: <description>]`: revise the code and call `proposeQueryData` again. Do not call `executeQueryData` yet.
-  - If the user sends `[Run code: <edited code>]`: call `executeQueryData` with the exact code as received — zero modifications.
+  - If the user sends `[Run code: <edited code>]`: call `executeQueryData` with the exact code as received — zero modifications — plus `autoFetch: true`, `sessionId`, `dateRange`.
+- Step 2 (auto-fetch): When `executeQueryData` returns `autoFetchCompleted: true`, the pipeline ran automatically (fetch + transform). The data is ready. Proceed directly to writing the belief statement and calling `executeChart`. **Do NOT call `requestContextCard`, `fetchSensorData`, `getTransformPipeline`, or `proposeQueryData` again.**
 - Step 3: After `executeQueryData` returns and you have written the belief statement, call `executeChart` directly — no approval gate for chart rendering.
 
 **Approval never carries over between questions.** Each new user question requires its own `proposeQueryData` approval cycle. A `[Code approved]` in one turn authorises that specific `executeQueryData` only. The next question starts fresh.
