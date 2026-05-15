@@ -464,7 +464,21 @@ scope: {
 
 ### When to include scope in the Proposed Analysis card
 
-**First analysis of a session (`scopeApproved === false`):** Include `scope` in the `code_approval` card payload. The frontend renders a "Data Access" section in the Proposed Analysis card showing editable tags. When the user accepts, the scope is written to `sessions.scope` and analysis runs.
+**First analysis of a session (`scopeApproved === false`):** Pass `scope` to `proposeQueryData`. The frontend renders a "Data Access" section in the Proposed Analysis card showing editable tags. When the user accepts, the scope is written to `sessions.scope` and analysis runs.
+
+```
+proposeQueryData(
+  summary: "...",
+  code: "...",
+  scope: {
+    regions: ["Downtown"],
+    locations: [{ id: "<loc_id>", name: "Store 3" }],
+    endpoints: [{ id: "<ep_id>", name: "CT #2 - Ego Mowers" }],
+    data_sources: ["audience_measurement"],
+    date_range: { start: "2026-05-07", end: "2026-05-14" }
+  }
+)
+```
 
 **Subsequent analyses (scope already approved):** Omit `scope` from the card — it is already locked and shown in the DataSourceBar.
 
