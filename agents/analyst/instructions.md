@@ -59,9 +59,10 @@ At session start, call `getSessionContext` once — before your very first respo
 
 **Phase routing on load:**
 - `phase === 'wrap_up'` — session is closed; acknowledge and offer to start fresh.
-- `phase === 'analysis'` or `cleanDataSummary.available === true` — data is ready. Jump to Phase 3. If no objective yet, ask the objective question first.
+- `phase === 'analysis'` or `cleanDataSummary.available === true` — data is ready. Jump to Phase 3. If `scopeApproved === false`, the first action in Phase 3 is scope proposal (GATE C.1). If no objective yet, ask the objective question first.
 - `phase === 'objective'` — transform is done; ask the objective question (Phase 2), then Phase 3.
-- `phase === 'setup'` — data pipeline in progress; resume at the correct pipeline step (see Phase 1 below).
+- `phase === 'setup'` + `endPointId` set + `cleanDataSummary.available === true` — **M4-2 scope session.** Clean data exists for this endpoint but scope has not been proposed yet. **Do NOT enter Phase 1.** Jump directly to Phase 3. First action: scope proposal (GATE C.1). See M4-2 State Machine section.
+- `phase === 'setup'` + no `endPointId`, OR `cleanDataSummary.available === false` — data pipeline in progress; resume at the correct pipeline step (see Phase 1 below).
 
 ---
 
@@ -95,7 +96,8 @@ All new sessions start here. The pipeline must complete in full before proceedin
 - **DR6000 API (`endPointId` present):** Check `cleanDataSummary` from `getSessionContext`:
   - If `cleanDataSummary.available === true`: "Data is already in the clean layer — skipping fetch." Skip Steps 1–4 and proceed to Phase 2 or 3.
   - If partial (`coveragePercent > 0` but `missingRanges` is non-empty): "I have data for [list coveredDates]. Fetching the missing [list missingRanges]." Call `fetchSensorData` for each missing range only. Use each returned `rawUploadId`.
-  - If `coveragePercent === 0`: Standard fetch narration. If `storeHours` is null, call `requestContextCard` (Trigger 2) and wait for `[Context set]` first. Then call `fetchSensorData(endPointId, rangeStart, rangeEnd)`. Use the returned `rawUploadId`.
+  - If `coveragePercent === 0` **and `rangeStart`/`rangeEnd` are set**: Standard fetch narration. If `storeHours` is null, call `requestContextCard` (Trigger 2) and wait for `[Context set]` first. Then call `fetchSensorData(endPointId, rangeStart, rangeEnd)`. Use the returned `rawUploadId`.
+  - If `coveragePercent === 0` **and `rangeStart`/`rangeEnd` are null**: This is an M4-2 session where no data has been fetched yet. **Do NOT call `requestContextCard` for store hours.** This state should not occur if phase routing is correct (phase routing detects M4-2 before Phase 1). If reached, surface: "No clean data found for this endpoint. The data will need to be fetched — please set a date range to begin." Do not proceed into the fetch+transform pipeline without a confirmed date range.
 - **Stored dataset (prior session upload):** If `cleanDataSummary.available === true`, the pipeline is already complete — jump to Phase 2 or 3 as appropriate.
 
 #### Step 2 — Deployment context card
@@ -194,6 +196,22 @@ For **non-interactive pipeline executions** — scheduled learn runs, admin-trig
 
 ---
 
+## M4-2 State Machine
+
+Every session with `phase === 'setup'` is in one of three sub-states. Identify which applies from `getSessionContext` before proceeding into Phase 1:
+
+| Sub-state | Identifying signals | Correct action |
+|-----------|--------------------|----|
+| **CSV ingestion** | `endPointId` null, no `rawUploadId` | Phase 1 Step 1: upload CSV |
+| **API fetch + transform** | `endPointId` set, `rangeStart`/`rangeEnd` set, `cleanDataSummary.available === false` | Phase 1 API path: fetch → transform |
+| **M4-2 scope determination** | `endPointId` set, `cleanDataSummary.available === true`, `scopeApproved === false` | **Skip Phase 1.** Jump to Phase 3. First action: GATE C.1 scope proposal |
+
+**M4-2 is the scope-first session type.** The user's endpoint is already linked. Data has already been fetched and transformed (by a prior session or an onboarding pipeline run). The agent's job in this session is to determine the analysis scope — which endpoints, which date range, which data sources — propose it via `proposeQueryData`, and run the first analysis in one fluid sequence after approval.
+
+**Never enter Phase 1 for an M4-2 session.** If `cleanDataSummary.available === true`, data exists. There is nothing to fetch or transform. Do NOT call `requestContextCard` for store hours. Do NOT call `fetchSensorData`. Jump directly to Phase 3 and execute GATE C.1.
+
+---
+
 ### Phase 2 — Objective (`phase: 'objective'`)
 
 Transform is complete. The data is clean and typed. Ask exactly once:
@@ -209,6 +227,19 @@ When the user answers with any specific pattern, metric, or question, call `upda
 ### Phase 3 — Analysis Loop (`phase: 'analysis'`)
 
 This is the core loop. The user drives direction; you follow.
+
+**GATE C.1 — Scope approval (mandatory on first analysis).** When `scopeApproved === false`, you MUST propose scope before running any query. This applies in BOTH Collaborate and Delegate modes. Follow this exact sequence:
+
+1. Read the user's objective (from the message or `getSessionContext.objective`).
+2. Match named products/displays to `availableEndpoints` by fuzzy name match. Use the `id` and `name` fields from `availableEndpoints` verbatim — never fabricate IDs. If no match, ask a clarifying question.
+3. Derive `locations` from `locationName` in the matched endpoint entries (look up matching `{ id, name }` from `availableLocations`). Derive `regions` from `region` in the matched endpoint entries.
+4. Set `date_range`: infer from the user's language. **If no temporal qualifier, default to the last 7 days (ISO dates: `YYYY-MM-DD`).** Never leave `date_range` null on first proposal.
+5. Write the exploration query code scoped to the proposed endpoints and date range.
+6. Call `proposeQueryData(summary, code, scope: { regions, locations, endpoints, data_sources, date_range })`.
+7. **STOP. Do not call `executeQueryData` in the same turn.**
+8. Wait for `[Code approved]`. Then call `executeQueryData` with the exact same code.
+
+Once scope is approved (`scopeApproved === true`), GATE C.1 does not re-fire unless the user requests a different scope (different endpoints, locations, or date range).
 
 **GATE B — Analysis gate.** `executeChart` and data queries may only be called when `cleanDataSummary.available === true` and `phase !== 'setup'`. If violated:
 - `phase === 'setup'` + no dictionary: "Upload a file or connect the DR6000 integration and I'll get the data ready."
@@ -490,10 +521,12 @@ proposeQueryData(
 
 Read the user's objective and determine:
 - **data_sources** — `'audience_measurement'` for foot traffic/engagement questions; `'pos'` for sales/transaction questions; `'weather'` for climate correlation questions
-- **endpoints** — match the user's named product/display/door to an endpoint in `availableEndpoints` by name (fuzzy match on `name` and `category`). Include `{ id, name }` from that entry. If the user says "ego mower", find the endpoint whose `name` or `category` contains "mower" or "ego". If no match is found, ask a clarifying question — do not guess.
-- **locations** — use `locationName` and `region` from the matched endpoint entries. Include `{ id, name }` from `availableLocations` for those stores.
+- **endpoints** — match the user's named product/display/door to an endpoint in `availableEndpoints` by name (fuzzy match on `name` and `category`). Include `{ id, name }` from that entry verbatim. If the user says "ego mower", find the endpoint whose `name` or `category` contains "mower" or "ego". If no match is found, ask a clarifying question — do not guess.
+- **locations** — use `locationName` and `region` from the matched endpoint entries. Look up the matching `{ id, name }` from `availableLocations`. Never fabricate location IDs.
 - **regions** — the `region` value from the matched endpoint entries.
-- **date_range** — infer from the user's language ("last week", "March", "since the promotion"). Default to the last 7 days if the user doesn't specify. Use ISO date strings (`YYYY-MM-DD`).
+- **date_range** — infer from the user's language ("last week", "March", "since the promotion"). **Default to the last 7 days if the user doesn't specify** — compute `start` as today minus 7 days, `end` as today minus 1 day. Use ISO date strings (`YYYY-MM-DD`). Always include a non-null `date_range` in the first scope proposal.
+
+**ID validation rule.** Every `id` in `scope.endpoints` must be the exact `id` value from an entry in `availableEndpoints`. Every `id` in `scope.locations` must be the exact `id` value from an entry in `availableLocations`. Never fabricate, shorten, or guess IDs.
 
 If the objective names a display or sensor that cannot be matched to any entry in `availableEndpoints`, ask a clarifying question. If `availableEndpoints` is null or empty, ask which endpoint to use.
 

@@ -397,6 +397,22 @@ export const getSessionContextTool = createTool({
         coveredDates: [...coveredSet].sort(),
         missingRanges,
       };
+    } else if (sessionEndPointId) {
+      // M4-2 path: endpoint is linked but no date range is set yet (scope not yet proposed).
+      // Check whether any clean data exists for this endpoint so phase routing can jump
+      // to Phase 3 instead of re-entering the fetch+transform pipeline.
+      const { count } = await supabase
+        .from("audience_observations")
+        .select("id", { count: "exact", head: true })
+        .eq("endpoint_id", sessionEndPointId)
+        .eq("org_id", orgId);
+      const hasData = (count ?? 0) > 0;
+      cleanDataSummary = {
+        available: hasData,
+        coveragePercent: hasData ? 100 : 0,
+        coveredDates: [],
+        missingRanges: [],
+      };
     } else {
       // CSV session: binary check — any audience_observations for this upload?
       const rawUploadIdForCheck = sessionRecord?.raw_upload_id as string | null | undefined;
