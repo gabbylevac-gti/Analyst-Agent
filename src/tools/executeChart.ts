@@ -149,7 +149,13 @@ export const executeChartTool = createTool({
       const dbPassword = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD ?? "");
       const dbUrl = `postgresql://postgres.ftshahsqtkxxjmpsmyhp:${dbPassword}@aws-1-us-east-2.pooler.supabase.com:5432/postgres?sslmode=require`;
 
-      const exec = await sandbox.runCode(code, {
+      // Auto-fix missing ::uuid[] cast on endpoint_id array filters (same as executeQueryData).
+      const fixedCode = code.replace(
+        /=\s*ANY\s*\(\s*ARRAY\s*\[([^\]]+)\]\s*\)(?!::uuid)/gi,
+        "= ANY(ARRAY[$1]::uuid[])"
+      );
+
+      const exec = await sandbox.runCode(fixedCode, {
         language: "python",
         envs: {
           DB_URL: dbUrl,

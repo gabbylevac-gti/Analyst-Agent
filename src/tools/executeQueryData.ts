@@ -311,7 +311,13 @@ export const executeQueryDataTool = createTool({
       };
 
       // ── 1. Run analysis code ───────────────────────────────────────────────
-      let result = await runAndParse(code);
+      // Auto-fix missing ::uuid[] cast on endpoint_id array filters.
+      // psycopg2 passes Python lists as text[], but endpoint_id is uuid — cast is required.
+      const fixedCode = code.replace(
+        /=\s*ANY\s*\(\s*ARRAY\s*\[([^\]]+)\]\s*\)(?!::uuid)/gi,
+        "= ANY(ARRAY[$1]::uuid[])"
+      );
+      let result = await runAndParse(fixedCode);
 
       // ── 2. Auto-fetch pipeline when analysis returns 0 rows ───────────────
       const shouldAutoFetch =
@@ -427,7 +433,7 @@ export const executeQueryDataTool = createTool({
         void supabase.from("sessions").update({ phase: "analysis" }).eq("id", sessionId!);
 
         // Re-run analysis code against the now-populated tables
-        result = await runAndParse(code);
+        result = await runAndParse(fixedCode);
         return { ...result, autoFetchCompleted: true };
       }
 
