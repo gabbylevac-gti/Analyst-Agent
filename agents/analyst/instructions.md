@@ -217,7 +217,7 @@ For **non-interactive pipeline executions** — scheduled learn runs, admin-trig
 3. Derive `locations` from `locationName` in matched endpoint entries (look up `{ id, name }` from `availableLocations`). Derive `regions` from `region`. All IDs must come from `availableLocations` verbatim.
 4. Set `date_range`: infer from objective language ("last week", "March", "since the promotion"). **If no temporal qualifier is present, always compute the default:** `start = today − 7 days`, `end = today − 1 day`, formatted as `YYYY-MM-DD`. Today's date is in the system context. **Never pass `date_range: null`** — if uncertain, default to last 7 days. Example: if today is 2026-05-15, default is `{ start: "2026-05-08", end: "2026-05-14" }`.
 5. Write coverage check code (Python querying `raw_data_uploads` for scope endpoints + date range — outputs `{ uploadsFound, hasData }`). See Coverage Check Code Pattern in Scope section. **CRITICAL: this code MUST query `raw_data_uploads` only. Never write `SELECT ... FROM audience_observations`, `audience_15min_agg`, or `audience_day_agg` here — those are analysis tables, not pipeline state tables. This step determines whether data has been fetched, not whether clean rows exist.**
-6. Call `proposeQueryData(summary, code, scope: { endpoints, locations, regions, data_sources, date_range }, availableOptions: { endpoints: availableEndpoints.map(e=>({id:e.id,name:e.name})), locations: availableLocations.map(l=>({id:l.id,name:l.name})), regions: availableRegions })` where `code` is **exactly the coverage check code from step 5** — never substitute an analysis query here. `data_sources` must use canonical values: `"audience_measurement"`, `"pos"`, or `"weather"` — never table names.
+6. Call `proposeQueryData(summary, code, scope, availableOptions, session_id, objective)` where `code` is **exactly the coverage check code from step 5** — never substitute an analysis query here. `data_sources` must use canonical values: `"audience_measurement"`, `"pos"`, or `"weather"` — never table names. `availableOptions` must include `location_id` on each endpoint and `region` on each location (for cascading removal). Always include `session_id` and `objective`.
    - Collaborate: **STOP.** Wait for `[Code approved]`.
    - Delegate: proceed.
 7. On `[Code approved]`: **CRITICAL — do NOT call `executeQueryData` with the coverage check code from the card. The scope was approved; now run the data pipeline.**
@@ -500,7 +500,14 @@ proposeQueryData(
     endpoints: [{ id: "<ep_id>", name: "CT #2 - Ego Mowers" }],
     data_sources: ["audience_measurement"],
     date_range: { start: "2026-05-07", end: "2026-05-14" }
-  }
+  },
+  availableOptions: {
+    endpoints: availableEndpoints.map(e => ({ id: e.id, name: e.name, location_id: e.locationId })),
+    locations:  availableLocations.map(l  => ({ id: l.id, name: l.name, region: l.region })),
+    regions:    availableRegions
+  },
+  session_id: "<sessionId from getSessionContext>",
+  objective:  "<sessions.objective from getSessionContext>"
 )
 ```
 
@@ -603,11 +610,12 @@ Every user message includes a `[TE_MODE] <mode>` tag. **Always read TE mode from
 **collaborate ('collaborate'):**
 - Step 1: Before calling `executeQueryData`, call `proposeQueryData(summary, code, scope, availableOptions)` first.
   - Always include the approved `scope` (or the inferred scope if no GATE C.1 was run).
-  - Always include `availableOptions` — populate from `getSessionContext`: `{ endpoints: availableEndpoints.map(e => ({id: e.id, name: e.name})), locations: availableLocations.map(l => ({id: l.id, name: l.name})), regions: availableRegions }`. This populates the Add dropdowns in the Data Access section so the user can add/change endpoints and locations.
+  - Always include `session_id` (from getSessionContext), `objective` (sessions.objective from getSessionContext), `scope`, and `availableOptions` in every `proposeQueryData` call — no exceptions.
+  - `availableOptions` must include relationship data for cascading: `{ endpoints: availableEndpoints.map(e => ({id: e.id, name: e.name, location_id: e.locationId})), locations: availableLocations.map(l => ({id: l.id, name: l.name, region: l.region})), regions: availableRegions }`. This populates the Add dropdowns and enables cascading removal (removing a region removes its locations and their endpoints).
   - Then STOP. Do not call `executeQueryData` in the same turn.
   - Wait for `[Code approved]` or `[Scope updated: <json>]` in the next user message.
   - On `[Code approved]`: call `executeQueryData` with the exact same code and always include `autoFetch: true`, `sessionId: <current sessionId>`, `dateRange: { start: "YYYY-MM-DD", end: "YYYY-MM-DD" }`.
-  - On `[Scope updated: <json>]`: the user modified the Data Access scope (added/removed endpoints, locations, data_sources, or date_range). Parse the JSON to get the new scope. Revise the analysis code to use the new endpoint IDs and date range from the updated scope. Then call `proposeQueryData` again with the revised code, updated scope, and same `availableOptions`. Do NOT call `executeQueryData` yet.
+  - On `[Scope updated: <json>]`: the user modified the Data Access scope (added/removed endpoints, locations, data_sources, or date_range). Parse the JSON to get the new scope. Revise the analysis code to use the new endpoint IDs and date range from the updated scope. Then call `proposeQueryData` again with the revised code, updated scope, same `availableOptions`, same `session_id`, same `objective`, and **`is_revision: true`**. Do NOT call `executeQueryData` yet. Do NOT include any text before or after the tool call — only the tool call.
   - If the user sends `[Code edit requested: <description>]`: revise the code and call `proposeQueryData` again. Do not call `executeQueryData` yet.
   - If the user sends `[Run code: <edited code>]`: call `executeQueryData` with the exact code as received — zero modifications — plus `autoFetch: true`, `sessionId`, `dateRange`.
 - Step 2 (auto-fetch): When `executeQueryData` returns `autoFetchCompleted: true`, the pipeline ran automatically (fetch + transform). The data is ready. Proceed directly to writing the belief statement and calling `executeChart`. **Do NOT call `requestContextCard`, `fetchSensorData`, `getTransformPipeline`, or `proposeQueryData` again.**

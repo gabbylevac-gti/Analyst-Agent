@@ -175,6 +175,7 @@ export const getSessionContextTool = createTool({
     availableEndpoints: z.array(z.object({
       id: z.string(),
       name: z.string(),
+      locationId: z.string().nullable(),
       locationName: z.string().nullable(),
       region: z.string().nullable(),
       category: z.string().nullable(),
@@ -530,7 +531,7 @@ export const getSessionContextTool = createTool({
     }
 
     // ── 7. Available endpoints + locations (for scope proposal when scope is null) ──
-    let availableEndpoints: Array<{ id: string; name: string; locationName: string | null; region: string | null; category: string | null }> | null = null;
+    let availableEndpoints: Array<{ id: string; name: string; locationId: string | null; locationName: string | null; region: string | null; category: string | null }> | null = null;
     let availableLocations: Array<{ id: string; name: string; region: string | null }> | null = null;
     let availableRegions: string[] | null = null;
 
@@ -543,10 +544,11 @@ export const getSessionContextTool = createTool({
         .order("end_point");
 
       availableEndpoints = (orgEndpoints ?? []).map((ep) => {
-        const loc = (ep.store_locations as unknown as { store_name: string; region: string | null } | null);
+        const loc = (ep.store_locations as unknown as { id: string; store_name: string; region: string | null } | null);
         return {
           id: ep.id as string,
           name: ep.end_point as string,
+          locationId: loc?.id ?? null,
           locationName: loc?.store_name ?? null,
           region: loc?.region ?? null,
           category: (ep.category as string | null) ?? null,
