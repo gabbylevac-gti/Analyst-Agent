@@ -100,15 +100,16 @@ export const proposeQueryDataTool = createTool({
     is_revision: z.boolean().optional(),
   }),
   execute: async ({ summary, code, scope, availableOptions, session_id, objective, is_revision }) => {
-    // Write the proposal to sessions.pending_proposal so the existing card can
-    // update in place via Realtime without the user seeing a new card.
-    if (session_id) {
+    // Write the proposal to sessions.pending_proposal only on revision calls so
+    // the existing card can update in place via Realtime without creating a new
+    // visible card. Non-revision calls skip this to avoid false triggers.
+    if (session_id && is_revision) {
       try {
         const supabase = getSupabase();
         await supabase
           .from("sessions")
           .update({
-            pending_proposal: { summary, code, scope, availableOptions, objective, is_revision },
+            pending_proposal: { summary, code, scope, availableOptions, objective },
           })
           .eq("id", session_id);
       } catch {
