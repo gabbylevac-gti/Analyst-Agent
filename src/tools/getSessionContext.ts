@@ -289,15 +289,16 @@ export const getSessionContextTool = createTool({
 
     // For M4-2 sessions, end_point_id is never set on the session record — the scope
     // approval flow writes the endpoint into sessions.scope, not sessions.end_point_id.
-    // Fall back to scope.endpoints[0].id when scope is approved so store hours and
-    // other endpoint metadata are available for Phase 1 (setup) without an extra round-trip.
+    // Use the first scope endpoint regardless of approval state: store hours are location
+    // metadata, not scope-dependent. This ensures storeHours is populated on the initial
+    // getSessionContext call (before approval), so the agent never needs to request it.
     const earlyScope = sessionRecord?.scope as {
       approved?: boolean;
       endpoints?: Array<{ id: string; name: string }>;
     } | null | undefined;
     const resolvedEndpointId = endPointId ?? (
-      earlyScope?.approved === true && (earlyScope.endpoints?.length ?? 0) > 0
-        ? earlyScope.endpoints![0].id
+      (earlyScope?.endpoints?.length ?? 0) > 0
+        ? earlyScope!.endpoints![0].id
         : undefined
     );
 

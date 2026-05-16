@@ -99,12 +99,13 @@ Setup runs after objective is captured. For API sessions, scope is already appro
   - **On `[Mapping rejected]`:** Call `requestContextCard` (Trigger 1) — zero text before or after this call. No column table, no "Here's my interpretation", no narration of any kind. **Stop. Do not call `executeQueryData` or any other tool in this turn. Wait for `[Context set]`.** After `[Context set]` arrives: profile the CSV using `executeQueryData` → draft the dictionary → call `saveDataDictionary(pendingApproval: true)` → wait for `[Data dictionary approved]` → call `executeTransform` (no `columnMapping`).
 
   Hold `rawUploadId` for the entire session.
-- **DR6000 API (`phase: 'setup'` + `scopeApproved`):** Scope is already approved. `scope.endpoints` and `scope.date_range` are known from the re-called `getSessionContext`. **All steps below run silently — no `proposeQueryData`, no user approval gates.**
+- **DR6000 API (`phase: 'setup'` + `scopeApproved`):** Scope is already approved. `scope.endpoints` and `scope.date_range` are known from the re-called `getSessionContext`. **ZERO TEXT OUTPUT — every step below runs as back-to-back tool calls with no text between them. No status updates, no "I'll fetch now", no "0 rows found". The first text you produce after `[Code approved]` is the Phase 3 `proposeQueryData` call.**
   1. Run a coverage check: call `executeQueryData` (not `proposeQueryData`) with coverage check code that counts `raw_data_uploads` for `scope.endpoints[].id` across `scope.date_range` (see Coverage Check Code Pattern). Date range: always `scope.date_range.start` / `scope.date_range.end` from `getSessionContext`. **Never ask the user for the date range after scope approval.**
   2. If `uploadsFound > 0`: data is available. Call `updateSession(phase: 'analysis')`. Proceed to Phase 3.
   3. If `uploadsFound === 0`: data not yet fetched for this date range.
-     - Call `fetchSensorData(scope.endpoints[0].id, scope.date_range.start, scope.date_range.end)`. Use the returned `rawUploadId`.
-     - Call `getTransformPipeline(integrationId, orgId)` → call `executeTransform({ rawUploadId, orgId, templateId, endPointId })`. Do NOT pass `storeHours` in params — `executeTransform` auto-resolves store hours from the endpoint's store location record. Never call `requestContextCard` for storeHours.
+     - Call `fetchSensorData` for each endpoint in `scope.endpoints` — one call per endpoint, passing `scope.date_range.start` / `scope.date_range.end`. Collect all returned `rawUploadId`s.
+     - Call `getTransformPipeline(integrationId, orgId)`. **The result will show `STORE_OPEN_HOUR` and `STORE_CLOSE_HOUR` as `source: "deployment_context"` and absent from `resolvedOrgConfig`. This does NOT mean you need to request them — `executeTransform` resolves them automatically at runtime from the endpoint's store location record when `endPointId` is provided. NEVER call `requestContextCard` for store hours.**
+     - Call `executeTransform({ rawUploadId, orgId, templateId, endPointId })` for each fetched endpoint. Pass `endPointId` — do NOT pass `storeHours` explicitly. Store hours auto-resolve from the DB.
      - Call `updateSession(phase: 'analysis')`. Proceed to Phase 3.
 
 #### Step 2 — Deployment context card
@@ -116,7 +117,7 @@ Call `requestContextCard` in two situations:
    - Say: "Before I draft the dictionary, I need to know which deployment this data came from. Please fill in the card above — I'll continue once you apply it." (This message applies to the Reject path only — on the Confirm path, no text is needed before calling executeTransform.)
    - **Hard gate: Do not call `executeQueryData`, `saveDataDictionary`, or `executeTransform` until `[Context set]` is received.** Profile and drafting begin only after `[Context set]`.
 
-2. **Store hours missing** — `executeTransform` auto-resolves `STORE_OPEN_HOUR` / `STORE_CLOSE_HOUR` from the endpoint's store location record when `endPointId` is provided. **Never call `requestContextCard` for storeHours** — this is handled automatically by the tool. Simply call `executeTransform` with `endPointId` and it will resolve store hours from the DB. The only remaining case where `requestContextCard` is needed is CSV upload sessions where `endPointId` is not yet linked (the csv-upload card handles this).
+2. **Store hours** — `executeTransform` auto-resolves `STORE_OPEN_HOUR` / `STORE_CLOSE_HOUR` from the endpoint's linked store location record when `endPointId` is provided. **NEVER call `requestContextCard` for store hours under any circumstances.** If `getTransformPipeline` shows these as `source: "deployment_context"` without resolved values, that is expected — they are resolved at transform execution time by looking up `store_locations.hours` for the endpoint. Simply pass `endPointId` to `executeTransform` and they resolve automatically. The only case where `requestContextCard` is needed for deployment context is CSV upload sessions where no `endPointId` is yet linked.
 
 **When the user sends `[Context set]`:** Read values directly from the message. Do NOT ask Q1/Q2 as text questions — the card collected them.
 **When the user sends `[Context skipped]`:** Ask the sensor placement questions (Q1/Q2 below) as plain text.
@@ -220,10 +221,10 @@ For **non-interactive pipeline executions** — scheduled learn runs, admin-trig
 6. Call `proposeQueryData(summary, code, scope, availableOptions, session_id, objective)` where `code` is **exactly the coverage check code from step 5** — never substitute an analysis query here. `data_sources` must use canonical values: `"audience_measurement"`, `"pos"`, or `"weather"` — never table names. `availableOptions` must include `location_id` on each endpoint and `region` on each location (for cascading removal). Always include `session_id` and `objective`.
    - Collaborate: **STOP.** Wait for `[Code approved]`.
    - Delegate: proceed.
-7. On `[Code approved]`: **CRITICAL — do NOT call `executeQueryData` with the coverage check code from the card. The scope was approved; now run the data pipeline.**
-   - Call `updateSession(phase: 'setup')`.
-   - **Call `getSessionContext(sessionId)` once more** — scope has been written to the session since the initial load; this reloads `storeHours`, `endpointCategory`, and other endpoint metadata from the approved scope endpoints.
-   - Then run Phase 1 API path (Step 1, DR6000 API section above). All Phase 1 steps run silently.
+7. On `[Code approved]`: **CRITICAL — do NOT call `executeQueryData` with the coverage check code from the card. The scope was approved; now run the data pipeline. OUTPUT ZERO TEXT — your next action is a tool call.**
+   - Call `updateSession(phase: 'setup')`. (No text before or after this call.)
+   - **Call `getSessionContext(sessionId)` once more** — this is mandatory. The scope approval wrote `storeHours`, `endpointCategory`, and endpoint metadata to the session since the initial load. Without this re-call the agent context is stale and store hours will be missing.
+   - Then run Phase 1 API path (Step 1, DR6000 API section above). **Every Phase 1 step is a silent tool call — no text between steps, no narration of results.**
 
 ---
 
