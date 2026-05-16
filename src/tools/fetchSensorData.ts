@@ -167,7 +167,9 @@ export const fetchSensorDataTool = createTool({
     const rowCount = lines.length - 1;
 
     // ── 6. Upload CSV to Supabase Storage ──────────────────────────────────────
-    const filename = `dr6000_${reportType}_${dateStart}_${dateEnd}.csv`;
+    // Include a short endpoint suffix so multi-endpoint fetches don't overwrite each other.
+    const epSuffix = endPointId.slice(0, 8);
+    const filename = `dr6000_${reportType}_${dateStart}_${dateEnd}_${epSuffix}.csv`;
     const storagePath = `sessions/${sessionId}/${filename}`;
 
     const { error: uploadError } = await supabase.storage

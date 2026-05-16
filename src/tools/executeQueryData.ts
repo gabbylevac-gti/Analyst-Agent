@@ -91,7 +91,8 @@ async function fetchFromDR6000(
   }
 
   const rowCount = csvText.trim().split("\n").length - 1;
-  const filename = `dr6000_paths_${dateStart}_${dateEnd}.csv`;
+  const epSuffix = endPointId.slice(0, 8);
+  const filename = `dr6000_paths_${dateStart}_${dateEnd}_${epSuffix}.csv`;
   const storagePath = `sessions/${sessionId}/${filename}`;
 
   const { error: uploadError } = await supabase.storage

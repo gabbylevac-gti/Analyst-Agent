@@ -33,6 +33,7 @@ import { requestContextCardTool } from "../tools/requestContextCard";
 import { getTransformPipelineTool } from "../tools/getTransformPipeline";
 import { proposeColumnMappingTool } from "../tools/proposeColumnMapping";
 import { triggerPipelineRunTool } from "../tools/triggerPipelineRun";
+import { runSetupPipelineTool } from "../tools/runSetupPipeline";
 import {
   INSTRUCTIONS,
   OUTPUT_CONTRACT,
@@ -147,5 +148,6 @@ export const analystAgent = new Agent({
     getTransformPipeline: getTransformPipelineTool,
     proposeColumnMapping: proposeColumnMappingTool,
     triggerPipelineRun: triggerPipelineRunTool,
+    runSetupPipeline: runSetupPipelineTool,
   },
 });
