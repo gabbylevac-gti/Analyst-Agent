@@ -22,10 +22,19 @@ const ScopeFieldSchema = z.object({
   data_sources: z.array(z.string()),
   date_range: z.object({ start: z.string(), end: z.string() }).nullable(),
 }).optional().describe(
-  "Data access scope for this session. Include on the FIRST analysis of a session " +
-  "(when scopeApproved === false from getSessionContext). Omit on subsequent analyses " +
-  "in the same session. When present, the card renders a 'Data Access' section with " +
-  "editable tags. Accepting the card writes sessions.scope with approved: true."
+  "Data access scope for this session. Always include in every proposeQueryData call. " +
+  "When present, the card renders a 'Data Access' section with editable tags. " +
+  "Accepting the card writes sessions.scope with approved: true."
+);
+
+const AvailableOptionsSchema = z.object({
+  endpoints: z.array(z.object({ id: z.string(), name: z.string() })),
+  locations: z.array(z.object({ id: z.string(), name: z.string() })),
+  regions: z.array(z.string()),
+}).optional().describe(
+  "All org-level endpoints/locations/regions from getSessionContext.availableEndpoints. " +
+  "These populate the Add dropdowns in the Data Access section so the user can add " +
+  "endpoints/locations/regions that are not yet in scope. Always pass this."
 );
 
 export const proposeQueryDataTool = createTool({
@@ -34,10 +43,10 @@ export const proposeQueryDataTool = createTool({
     "In Collaborate TE mode: call this tool to present the data exploration code to the user " +
     "for approval BEFORE calling executeQueryData. The result is rendered as a code-approval card. " +
     "After calling this tool, STOP — do not call executeQueryData in the same turn. " +
-    "Wait for [Code approved] in the next user message, then call executeQueryData with the same code. " +
+    "Wait for [Code approved] or [Scope updated: ...] in the next user message. " +
     "In Delegate mode, skip this tool entirely and call executeQueryData directly. " +
-    "Pass `scope` on the first analysis of a session (scopeApproved === false) so the card " +
-    "shows the Data Access section with editable endpoint/location/data-source tags.",
+    "Always pass `scope` and `availableOptions` so the card shows the Data Access section " +
+    "with editable endpoint/location/data-source tags and working Add dropdowns.",
   inputSchema: z.object({
     summary: z.string().describe(
       "Plain-language explanation: what this query computes, which table(s) it reads, and why it answers the user's question."
@@ -46,6 +55,7 @@ export const proposeQueryDataTool = createTool({
       "The exact Python exploration code you plan to pass to executeQueryData."
     ),
     scope: ScopeFieldSchema,
+    availableOptions: AvailableOptionsSchema,
   }),
   outputSchema: z.object({
     type: z.literal("code_approval"),
@@ -53,12 +63,14 @@ export const proposeQueryDataTool = createTool({
     code: z.string(),
     status: z.literal("pending"),
     scope: ScopeFieldSchema,
+    availableOptions: AvailableOptionsSchema,
   }),
-  execute: async ({ summary, code, scope }) => ({
+  execute: async ({ summary, code, scope, availableOptions }) => ({
     type: "code_approval" as const,
     summary,
     code,
     status: "pending" as const,
     scope,
+    availableOptions,
   }),
 });
