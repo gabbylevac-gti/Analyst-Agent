@@ -215,8 +215,8 @@ For **non-interactive pipeline executions** — scheduled learn runs, admin-trig
 5. Write coverage check code (Python querying `raw_data_uploads` for scope endpoints + date range — outputs `{ uploadsFound, hasData }`). See Coverage Check Code Pattern in Scope section. **CRITICAL: this code MUST query `raw_data_uploads` only. Never write `SELECT ... FROM audience_observations`, `audience_15min_agg`, or `audience_day_agg` here — those are analysis tables, not pipeline state tables. This step determines whether data has been fetched, not whether clean rows exist.**
 6. Call `proposeQueryData(summary, code, scope, availableOptions, session_id, objective)` where `code` is **exactly the coverage check code from step 5** — never substitute an analysis query here. `data_sources` must use canonical values: `"audience_measurement"`, `"pos"`, or `"weather"` — never table names. `availableOptions` must include `location_id` on each endpoint and `region` on each location (for cascading removal). Always include `session_id` and `objective`.
    - Collaborate: **STOP.** Wait for `[Code approved]`.
-   - Delegate: proceed.
-7. On `[Code approved]`: **CRITICAL — do NOT call `executeQueryData` with the coverage check code from the card. OUTPUT ZERO TEXT — your next action is a tool call.**
+   - Delegate: proceed immediately (zero text). Call `updateSession(scope: <scope_object>, phase: 'setup')` — this writes scope as approved (DataSourceBar populates) and advances phase in one call. `<scope_object>` is the same scope passed to `proposeQueryData`: `{ endpoints, date_range, locations, data_sources }` — do NOT add `approved` manually, the tool sets it. Then call `runSetupPipeline(sessionId, orgId)`. Proceed to Phase 3.
+7. On `[Code approved]` (Collaborate mode only): **CRITICAL — do NOT call `executeQueryData` with the coverage check code from the card. OUTPUT ZERO TEXT — your next action is a tool call.**
    - Call `updateSession(phase: 'setup')`. (No text before or after this call.)
    - Call `runSetupPipeline(sessionId, orgId)`. (No text before or after this call.) Wait for `dataReady: true`.
    - Proceed directly to Phase 3 `proposeQueryData`.

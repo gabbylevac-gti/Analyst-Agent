@@ -30,7 +30,9 @@ export const updateSessionTool = createTool({
     "(2) immediately after uploadDataset returns a datasetId — set active_dataset_id; " +
     "(3) after the data dictionary is approved and analysis begins — set phase='analysis'; " +
     "(4) on wrap-up — set phase='wrap_up'. " +
-    "This lets the next session pick up exactly where the current one left off.",
+    "This lets the next session pick up exactly where the current one left off. " +
+    "In Delegate mode: after proposeQueryData, call with scope + phase='setup' to persist " +
+    "the approved scope so DataSourceBar renders without requiring a user Accept click.",
   inputSchema: z.object({
     sessionId: z.string().describe("Current session ID"),
     phase: z
@@ -45,6 +47,14 @@ export const updateSessionTool = createTool({
       .string()
       .optional()
       .describe("datasets.id returned by uploadDataset — links this session to its dataset"),
+    scope: z
+      .record(z.unknown())
+      .optional()
+      .describe(
+        "Approved scope to persist to sessions.scope. Pass the same scope given to proposeQueryData: " +
+        "{ endpoints, date_range, locations, data_sources }. Do NOT add 'approved' manually — " +
+        "the tool merges { approved: true, approved_at } automatically. Use in Delegate mode."
+      ),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -63,6 +73,9 @@ export const updateSessionTool = createTool({
     if (context.phase !== undefined) patch.phase = context.phase;
     if (context.objective !== undefined) patch.objective = context.objective;
     if (context.activeDatasetId !== undefined) patch.active_dataset_id = context.activeDatasetId;
+    if (context.scope !== undefined) {
+      patch.scope = { ...context.scope, approved: true, approved_at: new Date().toISOString() };
+    }
 
     if (Object.keys(patch).length === 0) {
       return { success: false, message: "Nothing to update — pass at least one field." };
